@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -446,16 +446,11 @@ static PromiseResult VerifyFilePromise(EvalContext *ctx, char *path, const Promi
     }
     else
     {
-        if (!S_ISDIR(osb.st_mode))
+        if (!S_ISDIR(osb.st_mode) && a.havedepthsearch)
         {
-            if (a.havedepthsearch)
-            {
-                /* TODO: PROMISE_RESULT_DENIED */
-                Log(LOG_LEVEL_DEBUG,
-                    "depth_search (recursion) is promised for a base object '%s' that is not a directory",
-                    path);
-                goto exit;
-            }
+            Log(LOG_LEVEL_WARNING,
+                "depth_search (recursion) is promised for a base object '%s' that is not a directory",
+                path);
         }
 
         exists = true;
@@ -599,9 +594,9 @@ static PromiseResult VerifyFilePromise(EvalContext *ctx, char *path, const Promi
 
 // Once more in case a file has been created as a result of editing or copying
 
-    exists = (stat(changes_path, &osb) != -1);
+    exists = (lstat(changes_path, &osb) != -1);
 
-    if (exists && (S_ISREG(osb.st_mode))
+    if (exists && (S_ISREG(osb.st_mode) || S_ISLNK(osb.st_mode))
         && (!a.haveselect || SelectLeaf(ctx, path, &osb, &(a.select))))
     {
         VerifyFileLeaf(ctx, path, &osb, &a, pp, &result);
@@ -617,8 +612,9 @@ exit:
     free(chrooted_path);
     if (AttrHasNoAction(&a))
     {
-        Log(LOG_LEVEL_WARNING,
-            "No action was requested for file '%s'. Maybe a typo in the policy?", path);
+        Log(LOG_LEVEL_VERBOSE, "No action was requested for file '%s'. "
+            "Maybe all attributes are skipped due to unresolved arguments in policy functions? "
+            "Maybe a typo in the policy?", path);
     }
 
     switch(result)

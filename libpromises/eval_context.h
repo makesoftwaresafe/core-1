@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -249,9 +249,18 @@ static inline bool IsDefinedClass(const EvalContext *ctx, const char *context)
     return (CheckClassExpression(ctx, context) == EXPRESSION_VALUE_TRUE);
 }
 StringSet *ClassesMatching(const EvalContext *ctx, ClassTableIterator *iter, const char* regex, const Rlist *tags, bool first_only);
-
+StringSet *ClassesMatchingGlobal(const EvalContext *ctx, const char* regex, const Rlist *tags, bool first_only);
+StringSet *ClassesMatchingLocal(const EvalContext *ctx, const char* regex, const Rlist *tags, bool first_only);
 bool EvalProcessResult(const char *process_result, StringSet *proc_attr);
 bool EvalFileResult(const char *file_result, StringSet *leaf_attr);
+
+/**
+ * @brief Evaluates a class expression based on a set of defined classes.
+ * @param expr Class expression (E.g. "GMT_Monday|GMT_Wednesday").
+ * @param token_set Set of defined classes.
+ * @return True if the class expression evaluates to true, otherwise false.
+ */
+bool EvalWithTokenFromList(const char *expr, StringSet *token_set);
 
 /* Various global options */
 void SetChecksumUpdatesDefault(EvalContext *ctx, bool enabled);

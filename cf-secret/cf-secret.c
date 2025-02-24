@@ -1,5 +1,5 @@
 /*
-   Copyright 2022 Northern.tech AS
+   Copyright 2024 Northern.tech AS
 
    This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -44,6 +44,7 @@
 */
 
 #include <platform.h>
+#include <getopt.h>
 #include <openssl/err.h>
 
 #include <lastseen.h>
@@ -95,6 +96,13 @@ static const char *const CF_SECRET_MANPAGE_LONG_DESCRIPTION =
     "corresponding private key. Original author: Jon Henrik Bjornstad "
     "<jonhenrik@cfengineers.net>";
 
+static const Component COMPONENT =
+{
+    .name = "cf-secrets",
+    .website = CF_WEBSITE,
+    .copyright = CF_COPYRIGHT
+};
+
 static const struct option OPTIONS[] =
 {
     {"help",        no_argument,        0, 'h'},
@@ -117,15 +125,15 @@ static const char *const HINTS[] =
     "Enable verbose output",
     "Specify how detailed logs should be. Possible values: 'error', 'warning', 'notice', 'info', 'verbose', 'debug'",
     "Enable basic information output",
-    "Comma-separated list of key files to use (one of -k/-H options is required for encryption)",
-    "Comma-separated list of hosts to encrypt/decrypt for (defaults to 'localhost' for decryption)",
-    "Output file (required)",
+    "Comma-separated list of key files to use",
+    "Comma-separated list of hosts to encrypt/decrypt for (defaults to 'localhost')",
+    "Output file (required for encrypt/decrypt)",
     NULL
 };
 
 static const Description COMMANDS[] =
 {
-    {"encrypt", "Encrypt data for one or more hosts/keys", "cf-secret encrypt -k/-H KEY/HOST -o OUTPUT INPUT"},
+    {"encrypt", "Encrypt data for one or more hosts/keys", "cf-secret encrypt [-k/-H KEY/HOST] -o OUTPUT INPUT"},
     {"decrypt", "Decrypt data", "cf-secret decrypt [-k/-H KEY/HOST] -o OUTPUT INPUT"},
     {"print-headers", "Print headers from an encrypted file", "cf-secret print-headers ENCRYPTED_FILE"},
     {NULL, NULL, NULL}
@@ -831,7 +839,7 @@ static Seq *LoadPublicKeys(Seq *key_paths)
 static void CFKeyCryptHelp()
 {
     Writer *w = FileWriter(stdout);
-    WriterWriteHelp(w, "cf-secret", OPTIONS, HINTS, COMMANDS, true, true);
+    WriterWriteHelp(w, &COMPONENT, OPTIONS, HINTS, COMMANDS, true, true);
     FileWriterDetach(w);
 }
 
@@ -973,12 +981,10 @@ int main(int argc, char *argv[])
         DoCleanupAndExit(EXIT_SUCCESS);
     }
 
-    if (decrypt && (host_arg == NULL) && (key_path_arg == NULL))
+    // Default to localhost
+    if ((encrypt || decrypt) && (host_arg == NULL) && (key_path_arg == NULL))
     {
-        /* Decryption requires a private key which is usually only available for
-         * the local host. Let's just default to localhost if no other specific
-         * host/key is given for decryption. */
-        Log(LOG_LEVEL_VERBOSE, "Using the localhost private key for decryption");
+        Log(LOG_LEVEL_VERBOSE, "Using the localhost private key as default");
         host_arg = "localhost";
     }
 
@@ -1012,13 +1018,6 @@ int main(int argc, char *argv[])
     else
     {
         key_paths = SeqNew(16, free);
-    }
-
-    // Default to localhost on encryption
-    char *localhost = "127.0.0.1";
-    if (encrypt && key_path_arg == NULL && host_arg == NULL)
-    {
-        host_arg = localhost;
     }
 
     if (host_arg != NULL)

@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -713,7 +713,7 @@ static void FindV6InterfacesInfo(EvalContext *ctx, Rlist **interfaces, Rlist **h
 
                 // We know there was more data, at least a colon:
                 assert(src_length == bytes_to_copy);
-                const size_t dst_length = src_length - 1;
+                NDEBUG_UNUSED const size_t dst_length = src_length - 1;
 
                 // We copied everything up to, but not including, the colon:
                 assert(ifconfig_line[dst_length] == ':');
@@ -721,6 +721,11 @@ static void FindV6InterfacesInfo(EvalContext *ctx, Rlist **interfaces, Rlist **h
             }
         }
 
+        if (IgnoreInterface(current_interface))
+        {
+            // Ignore interfaces listed in ignore_interfaces.rx
+            continue;
+        }
 
         const char *const stripped_ifconfig_line =
             TrimWhitespace(ifconfig_line);
@@ -836,24 +841,70 @@ static void FindV6InterfacesInfo(EvalContext *ctx, Rlist **interfaces, Rlist **h
 static void InitIgnoreInterfaces()
 {
     FILE *fin;
-    char filename[CF_BUFSIZE],regex[256];
+    char filename[CF_BUFSIZE], regex[256];
 
-    snprintf(filename, sizeof(filename), "%s%c%s", GetInputDir(), FILE_SEPARATOR, CF_IGNORE_INTERFACES);
+    int ret = snprintf(
+        filename,
+        sizeof(filename),
+        "%s%c%s",
+        GetWorkDir(),
+        FILE_SEPARATOR,
+        CF_IGNORE_INTERFACES);
+    assert(ret >= 0 && (size_t) ret < sizeof(filename));
 
-    if ((fin = fopen(filename,"r")) == NULL)
+    if ((fin = fopen(filename, "r")) == NULL)
     {
-        Log(LOG_LEVEL_VERBOSE, "No interface exception file %s",filename);
-        return;
+        Log((errno == ENOENT) ? LOG_LEVEL_VERBOSE : LOG_LEVEL_ERR,
+            "Failed to open interface exception file %s: %s",
+            filename,
+            GetErrorStr());
+
+        /* LEGACY: The 'ignore_interfaces.rx' file was previously located in
+         * $(sys.inputdir). Consequently, if the file is found in this
+         * directory but not in $(sys.workdir), we will still process it, but
+         * issue a warning. */
+        ret = snprintf(
+            filename,
+            sizeof(filename),
+            "%s%c%s",
+            GetInputDir(),
+            FILE_SEPARATOR,
+            CF_IGNORE_INTERFACES);
+        assert(ret >= 0 && (size_t) ret < sizeof(filename));
+
+        if ((fin = fopen(filename, "r")) == NULL)
+        {
+            Log((errno == ENOENT) ? LOG_LEVEL_VERBOSE : LOG_LEVEL_ERR,
+                "Failed to open interface exception file %s: %s",
+                filename,
+                GetErrorStr());
+            return;
+        }
+
+        Log(LOG_LEVEL_WARNING,
+            "Found interface exception file %s in %s but it should be in %s. "
+            "Please consider moving it to the appropriate location.",
+            CF_IGNORE_INTERFACES,
+            GetInputDir(),
+            GetWorkDir());
     }
 
     while (!feof(fin))
     {
         regex[0] = '\0';
-        int scanCount = fscanf(fin,"%255s",regex);
+        int scanCount = fscanf(fin, "%255s", regex);
+        if (ferror(fin) != 0)
+        {
+            Log(LOG_LEVEL_ERR,
+                "Failed to read interface exception file %s: %s",
+                filename,
+                GetErrorStr());
+            break;
+        }
 
         if (scanCount != 0 && *regex != '\0')
         {
-           RlistPrependScalarIdemp(&IGNORE_INTERFACES, regex);
+            RlistPrependScalarIdemp(&IGNORE_INTERFACES, regex);
         }
     }
 
@@ -1241,7 +1292,7 @@ static JsonElement* GetNetworkingStatsInfo(const char *filename)
 // always returns the parsed data. If the key is not NULL, also
 // creates a sys.KEY variable.
 
-JsonElement* GetProcFileInfo(EvalContext *ctx, const char* filename, const char* key, const char* extracted_key, ProcPostProcessFn post, ProcTiebreakerFn tiebreak, const char* regex)
+JsonElement* GetProcFileInfo(EvalContext *ctx, const char* filename, const char* key, const char* extracted_key, ProcPostProcessFn post, ProcTiebreakerFn tiebreak, const char* pattern)
 {
     JsonElement *info = NULL;
     bool extract_key_mode = (extracted_key != NULL);
@@ -1251,15 +1302,8 @@ JsonElement* GetProcFileInfo(EvalContext *ctx, const char* filename, const char*
     {
         Log(LOG_LEVEL_VERBOSE, "Reading %s info from %s", key, filename);
 
-        pcre *pattern = NULL;
-        {
-            const char *errorstr;
-            int erroffset;
-            pattern = pcre_compile(regex, PCRE_MULTILINE | PCRE_DOTALL,
-                                   &errorstr, &erroffset, NULL);
-        }
-
-        if (pattern != NULL)
+        Regex *regex = CompileRegex(pattern);
+        if (regex != NULL)
         {
             size_t line_size = CF_BUFSIZE;
             char *line = xmalloc(line_size);
@@ -1268,7 +1312,7 @@ JsonElement* GetProcFileInfo(EvalContext *ctx, const char* filename, const char*
 
             while (CfReadLine(&line, &line_size, fin) != -1)
             {
-                JsonElement *item = StringCaptureData(pattern, regex, line);
+                JsonElement *item = StringCaptureData(regex, NULL, line);
 
                 if (item != NULL)
                 {
@@ -1332,7 +1376,7 @@ JsonElement* GetProcFileInfo(EvalContext *ctx, const char* filename, const char*
                 BufferDestroy(varname);
             }
 
-            pcre_free(pattern);
+            RegexDestroy(regex);
         }
 
         fclose(fin);

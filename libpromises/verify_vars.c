@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -61,7 +61,7 @@ static bool IsLegalVariableName(EvalContext *ctx, const Promise *pp)
 
     /* TODO: remove at some point (global, leaked), but for now
      * this offers an attractive speedup. */
-    static pcre *rx = NULL;
+    static Regex *rx = NULL;
     if (!rx)
     {
         /* \200-\377 is there for multibyte unicode characters */

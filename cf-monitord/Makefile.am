@@ -25,10 +25,11 @@ noinst_LTLIBRARIES = libcf-monitord.la
 
 AM_CPPFLAGS = \
 	-I$(srcdir)/../libntech/libutils \
+	-I$(srcdir)/../libcfecompat \
 	-I$(srcdir)/../libcfnet \
 	-I$(srcdir)/../libenv \
 	-I$(srcdir)/../libpromises \
-	$(PCRE_CPPFLAGS) \
+	$(PCRE2_CPPFLAGS) \
 	$(OPENSSL_CPPFLAGS) \
 	$(ENTERPRISE_CPPFLAGS)
 
@@ -77,8 +78,8 @@ if LINUX
 TESTS += get_socket_info
 noinst_PROGRAMS = get_socket_info
 get_socket_info_SOURCES = get_socket_info.c
-get_socket_info_LDADD = ${top_srcdir}/libntech/libutils/libutils.la \
-	$(PCRE_LIBS) \
+get_socket_info_LDADD = ../libntech/libutils/libutils.la \
+	$(PCRE2_LIBS) \
 	$(LIBYAML_LIBS) \
     libcf-monitord.la
 endif

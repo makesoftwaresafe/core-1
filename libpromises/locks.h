@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -38,6 +38,7 @@ void GetLockName(char *lockname, const char *locktype,
                  const char *base, const Rlist *params);
 void PurgeLocks(void);
 void BackupLockDatabase(void);
+void RestoreLockDatabase(void);
 
 // Used in enterprise/nova code:
 CF_DB *OpenLock();

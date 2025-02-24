@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -30,7 +30,6 @@
 #include <net.h>                      /* SendTransaction,ReceiveTransaction */
 #include <openssl/err.h>                                   /* ERR_get_error */
 #include <protocol.h>                              /* ProtocolIsUndefined() */
-#include <libcrypto-compat.h>
 #include <tls_client.h>               /* TLSTry */
 #include <tls_generic.h>              /* TLSVerifyPeer */
 #include <dir.h>
@@ -46,6 +45,7 @@
 #include <misc_lib.h>                                   /* ProgrammingError */
 #include <printsize.h>                                         /* PRINTSIZE */
 #include <lastseen.h>                                            /* LastSaw */
+#include <file_stream.h>
 
 
 #define CFENGINE_SERVICE "cfengine"
@@ -572,7 +572,7 @@ bool CompareHashNet(const char *file1, const char *file2, bool encrypt, AgentCon
 
 static bool EncryptCopyRegularFileNet(const char *source, const char *dest, off_t size, AgentConnection *conn)
 {
-    int blocksize = 2048, n_read = 0, plainlen, more = true, finlen, cnt = 0;
+    int blocksize = 2048, n_read = 0, plainlen, more = true, finlen;
     int tosend, cipherlen = 0;
     char *buf, in[CF_BUFSIZE], out[CF_BUFSIZE], workbuf[CF_BUFSIZE], cfchangedstr[265];
     unsigned char iv[32] =
@@ -658,7 +658,6 @@ static bool EncryptCopyRegularFileNet(const char *source, const char *dest, off_
             return false;
         }
 
-        cnt++;
 
         /* If the first thing we get is an error message, break. */
 
@@ -751,9 +750,11 @@ static void FlushFileStream(int sd, int toget)
 
 /* TODO finalise socket or TLS session in all cases that this function fails
  * and the transaction protocol is out of sync. */
-bool CopyRegularFileNet(const char *source, const char *dest, off_t size,
-                        bool encrypt, AgentConnection *conn)
+bool CopyRegularFileNet(const char *source, const char *basis, const char *dest, off_t size,
+                        bool encrypt, AgentConnection *conn, mode_t mode)
 {
+    assert(conn != NULL);
+
     char *buf, workbuf[CF_BUFSIZE], cfchangedstr[265];
     const int buf_size = 2048;
 
@@ -776,23 +777,12 @@ bool CopyRegularFileNet(const char *source, const char *dest, off_t size,
 
     unlink(dest);                /* To avoid link attacks */
 
-    int dd = safe_open_create_perms(dest, O_WRONLY | O_CREAT | O_TRUNC | O_EXCL | O_BINARY, CF_PERMS_DEFAULT);
-    if (dd == -1)
-    {
-        Log(LOG_LEVEL_ERR,
-            "Copy from server '%s' to destination '%s' failed (open: %s)",
-            conn->this_server, dest, GetErrorStr());
-        unlink(dest);
-        return false;
-    }
-
     workbuf[0] = '\0';
     int tosend = snprintf(workbuf, CF_BUFSIZE, "GET %d %s", buf_size, source);
     if (tosend <= 0 || tosend >= CF_BUFSIZE)
     {
         Log(LOG_LEVEL_ERR, "Failed to compose GET command for file %s",
             source);
-        close(dd);
         return false;
     }
 
@@ -801,7 +791,21 @@ bool CopyRegularFileNet(const char *source, const char *dest, off_t size,
     if (SendTransaction(conn->conn_info, workbuf, tosend, CF_DONE) == -1)
     {
         Log(LOG_LEVEL_ERR, "Couldn't send GET command");
-        close(dd);
+        return false;
+    }
+
+    const ProtocolVersion version = ConnectionInfoProtocolVersion(conn->conn_info);
+    if (ProtocolSupportsFileStream(version)) {
+        return FileStreamFetch(conn->conn_info->ssl, basis, dest, mode, false);
+    }
+
+    int dd = safe_open_create_perms(dest, O_WRONLY | O_CREAT | O_TRUNC | O_EXCL | O_BINARY, mode);
+    if (dd == -1)
+    {
+        Log(LOG_LEVEL_ERR,
+            "Copy from server '%s' to destination '%s' failed (open: %s)",
+            conn->this_server, dest, GetErrorStr());
+        unlink(dest);
         return false;
     }
 

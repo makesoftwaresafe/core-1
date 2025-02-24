@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -32,6 +32,7 @@ bool IsPendingTermination(void);
 
 bool ReloadConfigRequested(void);
 void ClearRequestReloadConfig();
+void RequestReloadConfig(void);
 
 void MakeSignalPipe(void);
 int GetSignalPipe(void);

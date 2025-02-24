@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -228,7 +228,7 @@ void FnCallWrite(Writer *writer, const FnCall *call)
         switch (rp->val.type)
         {
         case RVAL_TYPE_SCALAR:
-            ScalarWrite(writer, RlistScalarValue(rp), true);
+            ScalarWrite(writer, RlistScalarValue(rp), true, false);
             break;
 
         case RVAL_TYPE_FNCALL:

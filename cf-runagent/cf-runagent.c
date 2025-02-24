@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -21,6 +21,9 @@
   (COSL) may apply to this file if you as a licensee so wish it. See
   included file COSL.txt.
 */
+
+#include <platform.h>
+#include <getopt.h>
 
 #include <generic_agent.h>
 
@@ -92,6 +95,13 @@ static const char *const CF_RUNAGENT_MANPAGE_LONG_DESCRIPTION =
     "on which hosts cf-agent will be started, and classes that "
     "the user requests cf-agent should define on execution. "
     "The latter type is regulated by cf-serverd's role based access control.";
+
+static const Component COMPONENT =
+{
+    .name = "cf-runagent",
+    .website = CF_WEBSITE,
+    .copyright = CF_COPYRIGHT
+};
 
 static const struct option OPTIONS[] =
 {
@@ -413,7 +423,7 @@ static GenericAgentConfig *CheckOpts(int argc, char **argv)
         case 'h':
         {
             Writer *w = FileWriter(stdout);
-            WriterWriteHelp(w, "cf-runagent", OPTIONS, HINTS, NULL, false, true);
+            WriterWriteHelp(w, &COMPONENT, OPTIONS, HINTS, NULL, false, true);
             FileWriterDetach(w);
         }
         DoCleanupAndExit(EXIT_SUCCESS);
@@ -478,7 +488,7 @@ static GenericAgentConfig *CheckOpts(int argc, char **argv)
         default:
         {
             Writer *w = FileWriter(stdout);
-            WriterWriteHelp(w, "cf-runagent", OPTIONS, HINTS, NULL, false, true);
+            WriterWriteHelp(w, &COMPONENT, OPTIONS, HINTS, NULL, false, true);
             FileWriterDetach(w);
         }
         DoCleanupAndExit(EXIT_FAILURE);
@@ -705,13 +715,13 @@ static void KeepControlPromises(EvalContext *ctx, const Policy *policy)
                 if (strlen(value) >= sizeof(OUTPUT_DIRECTORY))
                 {
                     Log(LOG_LEVEL_ERR,
-                        "Could not set output direcory to '%s' - too long path",
+                        "Could not set output directory to '%s' - too long path",
                         (const char *) value);
                 }
                 else if (IsAbsPath(value))
                 {
                     strlcpy(OUTPUT_DIRECTORY, value, sizeof(OUTPUT_DIRECTORY));
-                    Log(LOG_LEVEL_VERBOSE, "Setting output direcory to '%s'", OUTPUT_DIRECTORY);
+                    Log(LOG_LEVEL_VERBOSE, "Setting output directory to '%s'", OUTPUT_DIRECTORY);
                 }
                 continue;
             }

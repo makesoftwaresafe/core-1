@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -24,9 +24,12 @@
 
 #ifndef __MINGW32__
 
+#include <platform.h>
 #include <shared_lib.h>
 #include <logging.h>
 #include <mutex.h>
+#include <pthread.h>
+#include <sys/stat.h>
 
 #include <dlfcn.h>
 

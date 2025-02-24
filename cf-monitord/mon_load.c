@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -31,6 +31,8 @@
 #else
 # define LOADAVG_5MIN    1
 #endif
+
+#include <cfecompat.h>
 
 /* Implementation */
 

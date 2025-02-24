@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -668,7 +668,8 @@ Promise *ExpandDeRefPromise(EvalContext *ctx, const Promise *pp, bool *excluded)
 
     *excluded = false;
 
-    Rval returnval = ExpandPrivateRval(ctx, NULL, "this", pp->promiser, RVAL_TYPE_SCALAR);
+    Rval returnval = ExpandPrivateRval(ctx, PromiseGetNamespace(pp),
+                                       "this", pp->promiser, RVAL_TYPE_SCALAR);
     if (returnval.item == NULL)
     {
         assert(returnval.type == RVAL_TYPE_LIST ||
@@ -681,8 +682,7 @@ Promise *ExpandDeRefPromise(EvalContext *ctx, const Promise *pp, bool *excluded)
     pcopy->promiser = RvalScalarValue(returnval);
 
     /* TODO remove the conditions here for fixing redmine#7880. */
-    if ((strcmp("files", PromiseGetPromiseType(pp)) != 0) &&
-        (strcmp("storage", PromiseGetPromiseType(pp)) != 0))
+    if (!StringEqual("storage", PromiseGetPromiseType(pp)))
     {
         EvalContextVariablePutSpecial(ctx, SPECIAL_SCOPE_THIS, "promiser", pcopy->promiser,
                                       CF_DATA_TYPE_STRING, "source=promise");
@@ -819,6 +819,17 @@ Promise *ExpandDeRefPromise(EvalContext *ctx, const Promise *pp, bool *excluded)
                 }
             }
         }
+    }
+
+    /* NOTE: We have to undefine the '$(this.promiser)' variable for a 'files'
+     *       promise now because it is later defined for the individual
+     *       expansions of the promise and so it has to be left unexpanded in
+     *       the constraints/attributes. It is, however, defined above just like
+     *       for any other promise so that it can be used in the common
+     *       if/ifvarclass/unless checking. */
+    if (StringEqual(PromiseGetPromiseType(pp), "files"))
+    {
+        EvalContextVariableRemoveSpecial(ctx, SPECIAL_SCOPE_THIS, "promiser");
     }
 
     /* Evaluate all constraints. */

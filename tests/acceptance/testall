@@ -431,7 +431,10 @@ runtest() {
                 $LN_CMD "$CF_NET" "$WORKDIR/bin"
                 $LN_CMD "$CF_CHECK" "$WORKDIR/bin"
                 $LN_CMD "$CF_RUNAGENT" "$WORKDIR/bin"
-                $LN_CMD "$RPMVERCMP" "$WORKDIR/bin"
+                if [ "$NEED_RPMVERCMP" = "yes" ]
+                then
+                    $LN_CMD "$RPMVERCMP" "$WORKDIR/bin"
+                fi
                 $LN_CMD "$DIFF" "$WORKDIR/bin"
             fi
             for inc in $INCLUDE_IN_WORKDIR
@@ -454,7 +457,7 @@ runtest() {
         fi
         if uname | grep MINGW > /dev/null
         then
-            PLATFORM_WORKDIR="$(echo $WORKDIR | sed -e 's%^/\([a-cA-Z]\)/%\1:/%' | sed -e 's%/%\\%g')"
+            PLATFORM_WORKDIR="$(echo $WORKDIR | sed -e 's%^/\([a-zA-Z]\)/%\1:/%' | sed -e 's%/%\\%g')"
             DS="\\"
         else
             PLATFORM_WORKDIR="$WORKDIR"
@@ -730,6 +733,13 @@ export CFENGINE_TEST_OVERRIDE_WORKDIR TEMP CFENGINE_TEST_OVERRIDE_EXTENSION_LIBR
                     ;;
             esac
         done
+        if [ "$GITHUB_ACTIONS" = "true" ] && [ "$RUNNER_OS" = "Windows" ]
+        then
+            # on Github Actions Windows runners, `rm -rf` moves files into /d/d/ directory.
+            # To clean this "Recycle bin", we delete this directory.
+            # Otherwise, runner promptly run out of disk space.
+            rm -rf /d/d/
+        fi
     fi
 
     if [ -z "$QUIET" ]
@@ -929,7 +939,15 @@ do
     esac
 done
 
-if [ -n "$AGENT" -o -n "$CF_PROMISES" -o -n "$CF_SERVERD" -o -n "$CF_EXECD" -o -n "$CF_KEY" -o -n "$CF_SECRET" -o -n "$CF_NET" -o -n "$CF_CHECK" -o -n "$CF_RUNAGENT" -o -n "$RPMVERCMP" -o -n "$DIFF" ]
+# check if rpm is used on this host, sometimes it can be installed but not used say on Ubuntu
+if [ -n "$(command -v rpm)" ] && [ "$(rpm -qa | wc -l)" != "0" ]
+then
+  NEED_RPMVERCMP="yes"
+else
+  NEED_RPMVERCMP="no"
+fi
+
+if [ -n "$AGENT" -o -n "$CF_PROMISES" -o -n "$CF_SERVERD" -o -n "$CF_EXECD" -o -n "$CF_KEY" -o -n "$CF_SECRET" -o -n "$CF_NET" -o -n "$CF_CHECK" -o -n "$CF_RUNAGENT" -o \( "$NEED_RPMVERCMP" = "yes" -a -n "$RPMVERCMP" \) -o -n "$DIFF" ]
 then
     if [ -n "$BINDIR" ]
     then
@@ -963,7 +981,10 @@ find_default_binary DEFCF_SECRET cf-secret
 find_default_binary DEFCF_NET cf-net
 find_default_binary DEFCF_CHECK cf-check
 find_default_binary DEFCF_RUNAGENT cf-runagent
-find_default_binary DEFRPMVERCMP rpmvercmp
+if [ "$NEED_RPMVERCMP" = "yes" ]
+then
+  find_default_binary DEFRPMVERCMP rpmvercmp
+fi
 find_default_binary DIFF diff
 
 [ -x "`pwd`/libtool" ] && DEFLIBTOOL="`pwd`/libtool"
@@ -981,7 +1002,7 @@ CF_RUNAGENT=${CF_RUNAGENT:-${DEFCF_RUNAGENT}}
 RPMVERCMP=${RPMVERCMP:-${DEFRPMVERCMP}}
 LIBTOOL=${LIBTOOL:-${DEFLIBTOOL}}
 
-if [ ! -x "$AGENT" -o ! -x "$CF_PROMISES" -o ! -x "$CF_SERVERD" -o ! -x "$CF_EXECD" -o ! -x "$CF_KEY" -o ! -x "$CF_SECRET" -o ! -x "$CF_NET" -o ! -x "$CF_CHECK" -o ! -x "$CF_RUNAGENT" -o ! -x "$RPMVERCMP" ]
+if [ ! -x "$AGENT" -o ! -x "$CF_PROMISES" -o ! -x "$CF_SERVERD" -o ! -x "$CF_EXECD" -o ! -x "$CF_KEY" -o ! -x "$CF_SECRET" -o ! -x "$CF_NET" -o ! -x "$CF_CHECK" -o ! -x "$CF_RUNAGENT" -o \( "$NEED_RPMVERCMP" = "yes" -a ! -x "$RPMVERCMP" \) ]
 then
     echo "ERROR: can't find cf-agent or other binary;"     \
          " Are you sure you're running this from OBJDIR"   \

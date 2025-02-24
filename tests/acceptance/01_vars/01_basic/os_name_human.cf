@@ -38,6 +38,8 @@ bundle agent test
       "expected" string => "HP-UX";
     suse::
       "expected" string => "SUSE";
+    opensuse::
+      "expected" string => "OpenSUSE";
     windows::
       "expected" string => "Windows";
     freebsd::
@@ -46,6 +48,8 @@ bundle agent test
       "expected" string => "macOS";
     solaris::
       "expected" string => "Solaris";
+    amazon_linux::
+      "expected" string => "Amazon";
 }
 
 bundle agent check

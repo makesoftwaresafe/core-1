@@ -7,7 +7,7 @@ Tested on FreeBSD 12.1 VM in AWS EC2.
 ## Dependencies
 
 ```
-$ su root -c 'pkg update -f && pkg install -y gdb gcc gmake lmdb autoconf automake libtool git python3 emacs-nox'
+$ su root -c 'pkg update -f && pkg install -y gdb gcc gmake lmdb autoconf automake libtool git python3'
 ```
 
 ## Download
@@ -44,7 +44,7 @@ $ git rebase master
 Within `core` directory:
 
 ```
-$ ./autogen.sh --enable-debug -C --with-lmdb=/usr/local/ --with-pcre=/usr/local/
+$ ./autogen.sh --enable-debug -C --with-lmdb=/usr/local/ --with-pcre2=/usr/local/
 $ gmake -j8
 ```
 

@@ -69,6 +69,39 @@ git_setup_local_mirrored_repo() {
     error_exit "Failed: git clone --mirror '${GIT_URL}' '${local_mirrored_repo}'"
 }
 
+git_checkout_into_temp_dir() {
+  # Depends on $local_mirrored_repo
+  # Accepts two args:
+  # $1 - dir to deploy to
+  # $2 - refspec to deploy - a git tagname, branch, or commit hash.
+  # $3 - project subdirectory inside the repository to deploy.
+
+  # The '^0' at the end of the refspec
+  # populates HEAD with the SHA of the commit
+  # rather than potentially using a git branch name.
+  # Also see http://stackoverflow.com/a/13293010/5419599
+  # and https://github.com/cfengine/core/pull/2465#issuecomment-173656475
+  
+  # Checkout with optional subdirectory if not empty
+  if [ -n "$3" ]; then
+    # checkout subdirectory only
+    git --git-dir="${local_mirrored_repo}" --work-tree="${temp_stage}" checkout -q -f "${2}^0" -- "$3" ||
+      error_exit "Failed to checkout subdirectory '$3' from '$2'"
+    # move contents of subdirectory to the temp_stage root
+    # include dotfile matching in wildcard expansions to move them as well
+    shopt -s dotglob 
+    mv "${temp_stage}/${3}"/* "${temp_stage}/"
+    # disable dotfile matching
+    shopt -u dotglob
+    # remove empty subdirectory from the temp_stage
+    rmdir "${temp_stage}/${3}"
+  else
+    # checkout the whole repository
+    git --git-dir="${local_mirrored_repo}" --work-tree="${temp_stage}" checkout -q -f "${2}^0" ||
+      error_exit "Failed to checkout '$2' from '${local_mirrored_repo}'"
+  fi
+}
+
 git_deploy_refspec() {
 # Contributed by Mike Weilgart
 
@@ -76,14 +109,16 @@ git_deploy_refspec() {
   # Accepts two args:
   # $1 - dir to deploy to
   # $2 - refspec to deploy - a git tagname, branch, or commit hash.
+  # $3 - project subdirectory inside the repository to deploy.
 
   # This function
   # 1. creates an empty temp dir,
   # 2. checks out the refspec into the empty temp dir,
   #    (including populating .git/HEAD in the temp dir),
-  # 3. sets appropriate permissions on the policy set,
-  # 4. validates the policy set using cf-promises,
-  # 5. moves the temp dir policy set into the given deploy dir,
+  # 3. if the project subdirectory is set, it checks it out and moves files from it to the root of the temp dir.
+  # 4. sets appropriate permissions on the policy set,
+  # 5. validates the policy set using cf-promises,
+  # 6. moves the temp dir policy set into the given deploy dir,
   #    avoiding triggering policy updates unnecessarily
   #    by comparing the cf_promises_validated flag file.
   #    (See long comment at end of function def.)
@@ -94,6 +129,10 @@ git_deploy_refspec() {
   mkdir -p "$(dirname "$1")" || error_exit "Failed to mkdir -p dirname $1"
     # We don't mkdir $1 directly, just its parent dir if that doesn't exist.
 
+  if git_check_is_in_sync "${local_mirrored_repo}" "$1" "$2"; then
+    return 0
+  fi
+
   ########################## 1. CREATE EMPTY TEMP DIR
   # Put staging dir right next to deploy dir to ensure it's on same filesystem
   local temp_stage
@@ -101,13 +140,8 @@ git_deploy_refspec() {
   trap 'rm -rf "$temp_stage"' EXIT
 
   ########################## 2. CHECKOUT INTO TEMP DIR
-  # The '^0' at the end of the refspec
-  # populates HEAD with the SHA of the commit
-  # rather than potentially using a git branch name.
-  # Also see http://stackoverflow.com/a/13293010/5419599
-  # and https://github.com/cfengine/core/pull/2465#issuecomment-173656475
-  git --git-dir="${local_mirrored_repo}" --work-tree="${temp_stage}" checkout -q -f "${2}^0" ||
-    error_exit "Failed to checkout '$2' from '${local_mirrored_repo}'"
+  git_checkout_into_temp_dir "$1" "$2" "$3"
+
   # Grab HEAD so it can be used to populate cf_promises_release_id
   mkdir -p "${temp_stage}/.git"
   cp "${local_mirrored_repo}/HEAD" "${temp_stage}/.git/"
@@ -176,27 +210,42 @@ git_cfbs_deploy_refspec() {
   # Accepts two args:
   # $1 - dir to deploy to
   # $2 - refspec to deploy - a git tagname, branch, or commit hash.
+  # $3 - project subdirectory inside the repository to deploy.
 
   # This function
   # 1. creates an empty temp dir,
   # 2. checks out the refspec into the empty temp dir,
   #    (including populating .git/HEAD in the temp dir),
-  # 3. builds policy with cfbs
-  # 4. sets appropriate permissions on the policy set,
-  # 5. validates the policy set using cf-promises,
-  # 6. moves the temp dir policy set into the given deploy dir,
+  # 3. if the project subdirectory is set, it checks it out and moves files from it to the root of the temp dir.
+  # 4. builds policy with cfbs
+  # 5. sets appropriate permissions on the policy set,
+  # 6. validates the policy set using cf-promises,
+  # 7. moves the temp dir policy set into the given deploy dir,
   #    avoiding triggering policy updates unnecessarily
   #    by comparing the cf_promises_validated flag file.
   #    (See long comment at end of function def.)
 
   # The chipmunk in cfbs output breaks things without this or similar
-  export LANG=en_US.utf-8
+  # The chipmunk in cfbs output breaks things without this or similar
+  if [ -f "/etc/locale.conf" ]; then
+    source "/etc/locale.conf"
+    export LC_ALL="$LANG" # retrieved from locale.conf
+  else
+    _LOCALE=$(locale -a | grep -i utf | head -1)
+    if [ -n "$_LOCALE" ]; then
+      export LC_ALL="$_LOCALE"
+    fi
+  fi
 
   # Ensure absolute pathname is given
   [ "${1:0:1}" = / ] ||
     error_exit "You must specify absolute pathnames in channel_config: '$1'"
   mkdir -p "$(dirname "$1")" || error_exit "Failed to mkdir -p dirname $1"
     # We don't mkdir $1 directly, just its parent dir if that doesn't exist.
+
+  if git_check_is_in_sync "${local_mirrored_repo}" "$1" "$2"; then
+    return 0
+  fi
 
   ########################## 1. CREATE EMPTY TEMP DIR
   # Put staging dir right next to deploy dir to ensure it's on same filesystem
@@ -205,25 +254,19 @@ git_cfbs_deploy_refspec() {
   trap 'rm -rf "$temp_stage"' EXIT
 
   ########################## 2. CHECKOUT INTO TEMP DIR
-  # The '^0' at the end of the refspec
-  # populates HEAD with the SHA of the commit
-  # rather than potentially using a git branch name.
-  # Also see http://stackoverflow.com/a/13293010/5419599
-  # and https://github.com/cfengine/core/pull/2465#issuecomment-173656475
-  git --git-dir="${local_mirrored_repo}" --work-tree="${temp_stage}" checkout -q -f "${2}^0" ||
-    error_exit "Failed to checkout '$2' from '${local_mirrored_repo}'"
+  git_checkout_into_temp_dir "$1" "$2" "$3"
 
   ########################## 3. cfbs build
   # Remember what directory we were in when we started.
   _start_wrkdir=$(pwd)
   # Switch to the staging directory and build with cfbs
   cd "${temp_stage}"
-  cfbs build || error_exit "cfbs build failed"
+  CFBS_GLOBAL_DIR="/opt/cfengine/build/cfbs_global" cfbs build || error_exit "cfbs build failed"
   # Switch back to the original working dir
   cd "${_start_wrkdir}"
   # Grab HEAD so it can be used to populate cf_promises_release_id
-  mkdir -p "${temp_stage}/.git"
-  cp "${local_mirrored_repo}/HEAD" "${temp_stage}/.git/"
+  mkdir -p "${temp_stage}/out/masterfiles/.git"
+  cp "${local_mirrored_repo}/HEAD" "${temp_stage}/out/masterfiles/.git/"
 
   ########################## 3. SET PERMISSIONS ON POLICY SET
   chown -R root:root "${temp_stage}" || error_exit "Unable to chown '${temp_stage}'"
@@ -254,6 +297,7 @@ git_cfbs_deploy_refspec() {
       # If the above command fails we will have an extra temp dir left.  Otherwise not.
     mv "${temp_stage}/out/masterfiles" "${1}"          || error_exit "Can't mv ${temp_stage}/out/masterfiles to ${1}"
     cp "${temp_stage}/cfbs.json" "${1}"          || error_exit "Can't cp ${temp_stage}/cfbs.json to ${1}"
+    rm -rf "${temp_stage}"
     rm -rf "${third_dir}"
     trap -- EXIT
   fi
@@ -286,9 +330,30 @@ git_cfbs_deploy_refspec() {
 ######################################################
 ##           VCS_TYPE-based main functions           #
 ######################################################
+git_check_is_in_sync() {
+  # $1 -- git repo mirror
+  # $2 -- checked out work-tree
+  # $3 -- refspec
+
+  # Get the hash of the refspec in the mirror and compare it to the checked out
+  # work-tree (see git_deploy_refspec() for details).
+  # ^0 is to make sure we get just the commit hash without any unwanted info
+  # (like we would otherwise get for a tag, for example).
+  mirror_rev="$(git --git-dir="$1" show --pretty=format:%H -s "${3}^0")"
+  work_tree_rev="$(cat "$2/.git/HEAD")"
+
+  test "$mirror_rev" = "$work_tree_rev"
+}
 
 git_stage_policy_channels() {
-# Contributed by Mike Weilgart
+  # $1 -- whether to check only [true/false; optional]
+  check="false"
+  if [ "$#" -gt 0 ]; then
+    check="$1"
+    shift
+  fi
+
+  # Contributed by Mike Weilgart
 
   # Depends on ${channel_config[@]} and $dir_to_hold_mirror
   # Calls functions dependent on $GIT_URL
@@ -320,6 +385,17 @@ git_stage_policy_channels() {
   check_git_installed
   git_setup_local_mirrored_repo "$dir_to_hold_mirror"
 
+  if [ "$check" = "true" ]; then
+    while [ "$#" -gt 1 ] ; do
+      # At start of every loop, "$1" contains deploy dir and "$2" is refspec.
+      if ! git_check_is_in_sync "$dir_to_hold_mirror" "$1" "$2"; then
+        return 0  # something to update
+      fi
+      shift 2
+    done
+    return 1  # nothing to update
+  fi
+
   while [ "$#" -gt 1 ] ; do
     # At start of every loop, "$1" contains deploy dir and "$2" is refspec.
     git_deploy_refspec "$1" "$2"
@@ -331,24 +407,41 @@ git_stage_policy_channels() {
 }
 
 git_masterstage() {
-  # Depends on $GIT_URL, $ROOT, $MASTERDIR, $GIT_REFSPEC
+  # $1 -- whether to check only [true/false; optional]
+  # Depends on $GIT_URL, $ROOT, $MASTERDIR, $GIT_REFSPEC, $PROJECT_SUBDIRECTORY
   check_git_installed
   git_setup_local_mirrored_repo "$( dirname "$ROOT" )"
-  git_deploy_refspec "$MASTERDIR" "${GIT_REFSPEC}"
-  echo "Successfully deployed '${GIT_REFSPEC}' from '${GIT_URL}' to '${MASTERDIR}' on $(date)"
+  if [ "x$1" = "xtrue" ]; then
+    if git_check_is_in_sync "$( dirname "$ROOT" )" "$MASTERDIR" "$GIT_REFSPEC"; then
+      return 1  # in sync => nothing to do
+    else
+      return 0  # not in sync => update available
+    fi
+  fi
+  git_deploy_refspec "$MASTERDIR" "${GIT_REFSPEC}" "${PROJECT_SUBDIRECTORY}"
+  echo "Successfully deployed '${GIT_REFSPEC}' from '${GIT_URL}'$( [[ -n "${PROJECT_SUBDIRECTORY}" ]] && echo " subdirectory: '${PROJECT_SUBDIRECTORY}'") to '${MASTERDIR}' on $(date)"
 }
 
 git_cfbs_masterstage() {
+    # $1 -- whether to check only [true/false; optional]
     # Depends on $GIT_URL, $ROOT, $MASTERDIR, $GIT_REFSPEC
     check_git_installed
     check_cfbs_installed
     git_setup_local_mirrored_repo "$( dirname "$ROOT" )"
-    git_cfbs_deploy_refspec "$MASTERDIR" "${GIT_REFSPEC}"
-    echo "Successfully built and deployed '${GIT_REFSPEC}' from '${GIT_URL}' to '${MASTERDIR}' on $(date) with cfbs"
+    if [ "x$1" = "xtrue" ]; then
+      if git_check_is_in_sync "$( dirname "$ROOT" )" "$MASTERDIR" "$GIT_REFSPEC"; then
+        return 1  # in sync => nothing to do
+      else
+        return 0  # not in sync => update available
+      fi
+    fi
+    git_cfbs_deploy_refspec "$MASTERDIR" "${GIT_REFSPEC}" "${PROJECT_SUBDIRECTORY}"
+    echo "Successfully built and deployed '${GIT_REFSPEC}' from '${GIT_URL}'$( [[ -n "${PROJECT_SUBDIRECTORY}" ]] && echo " subdirectory: '${PROJECT_SUBDIRECTORY}'") to '${MASTERDIR}' on $(date) with cfbs"
 }
 
 svn_branch() {
 # Contributed by John Farrar
+    # $1 -- whether to check only [true/false; optional]
 
     # We probably want a different temporary location for each remote repository
     # so that we can avoid conflicts and potential confusion.
@@ -380,7 +473,15 @@ svn_branch() {
         if /usr/bin/diff -q "${STAGING_DIR}/${CHECKSUM_FILE}" "${MASTERDIR}/${CHECKSUM_FILE}" ; then
             # echo "No release needs to be made, the checksum files are the same"
             touch "${STAGING_DIR}"
+            if [ "x$1" = "xtrue" ]; then
+              # check-only, update not needed => exit code 1
+              return 1
+            fi
         else
+            if [ "x$1" = "xtrue" ]; then
+              # check-only, update needed => exit code 0
+              return 0
+            fi
             cd "${STAGING_DIR}" && (
                 chown -R root:root "${STAGING_DIR}" && \
                 rsync -CrltDE -c --delete-after --chmod=u+rwX,go-rwx "${STAGING_DIR}/" "${MASTERDIR}/" && \

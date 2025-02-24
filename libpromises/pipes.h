@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -49,7 +49,7 @@ int cf_pclose_full_duplex_side(int fd);
 
 FILE *cf_popen(const char *command, const char *type, bool capture_stderr);
 FILE *cf_popen_select(const char *command, const char *type, OutputSelect output_select);
-FILE *cf_popensetuid(const char *command, const char *type, uid_t uid, gid_t gid, char *chdirv, char *chrootv, int background);
+FILE *cf_popensetuid(const char *command, const Seq *arglist, const char *type, uid_t uid, gid_t gid, char *chdirv, char *chrootv, int background);
 FILE *cf_popen_sh(const char *command, const char *type);
 FILE *cf_popen_sh_select(const char *command, const char *type, OutputSelect output_select);
 FILE *cf_popen_shsetuid(const char *command, const char *type, uid_t uid, gid_t gid, char *chdirv, char *chrootv, int background);

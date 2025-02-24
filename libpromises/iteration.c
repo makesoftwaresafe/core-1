@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -99,9 +99,6 @@ typedef struct {
     /* The unexpanded variable name, dependent on inner expansions. This
      * field never changes after Wheel initialisation. */
     char *varname_unexp;
-
-    /* Number of dependencies of varname_unexp */
-    //    const size_t deps;
 
     /* On each iteration of the wheels, the unexpanded string is
      * re-expanded, so the following is refilled, again and again. */
@@ -313,12 +310,10 @@ static bool IsMangled(const char *s)
  * whichever comes first.
  *
  * "this" scope is never mangled, no need to VariablePut() a mangled reference
- * in THIS scope, since the non-manled one already exists.
+ * in THIS scope, since the non-mangled one already exists.
  */
 static void MangleVarRefString(char *ref_str, size_t len)
 {
-    //    printf("MangleVarRefString: %.*s\n", (int) len, ref_str);
-
     size_t dollar_paren = FindDollarParen(ref_str, len);
     size_t upto         = MIN(len, dollar_paren);
     char *bracket       = memchr(ref_str, '[', upto);
@@ -527,7 +522,6 @@ static char *ProcessVar(PromiseIterator *iterctx, const EvalContext *evalctx,
         s_end = s + s_max;
     }
     char *next_var = s + FindDollarParen(s, s_max);
-    size_t deps    = 0;
 
     while (next_var < s_end)              /* does it have nested variables? */
     {
@@ -552,7 +546,6 @@ static char *ProcessVar(PromiseIterator *iterctx, const EvalContext *evalctx,
         else                          /* inner variable processed correctly */
         {
             /* This variable depends on inner expansions. */
-            deps++;
             /* We are sure (subvar_end+1) is not out of bounds. */
             char *s_next = subvar_end + 1;
             const size_t s_next_len = strlen(s_next);
@@ -789,6 +782,108 @@ static Seq *IterableToSeq(const void *v, DataType t)
     }
 }
 
+/* During initialization of the iteration engine, lists from foreign bundles are
+ * mangled in order to avoid overwriting the values in that bundle. However, the
+ * iteration engine has no way of knowing that some variables like
+ * $($(parent_bundle).lst) is a list during initialization. Hence, while
+ * crunching the wheels, this hack makes sure foreign variables are mangled when
+ * ever they expand into a list.
+ *
+ * How does it work? It looks for a '.' in both #iterctx->pp->promiser and
+ * #varname, where the left side of #varname is a bundle name and the right side
+ * of #iterctx->pp->promiser begins with the right side of #varname. If all of
+ * the constraints are fulfilled it swaps the '.' with '#' in both variables.
+ * Furthermore, if the variable also contains a namespace, it will mangle ':'
+ * with '*'.
+ *
+ * See ticket ENT-9491 & ENT-11923 for more info.
+ */
+static void WheelMangleAfterExpandingToList(const PromiseIterator *iterctx,
+                                            EvalContext *evalctx, char *varname)
+{
+    assert(iterctx != NULL);
+    assert(iterctx->pp != NULL);
+    assert(iterctx->pp->promiser != NULL);
+
+    const StringSet *scopes = EvalContextGetBundleNames(evalctx);
+
+    // In case there is a namespace
+    char *unexp_namespace_token = iterctx->pp->promiser;
+    while ((unexp_namespace_token = strchr(unexp_namespace_token, CF_NS)) != NULL)
+    {
+        char *exp_namespace_token = varname;
+        while ((exp_namespace_token = strchr(exp_namespace_token, CF_NS)) != NULL)
+        {
+            char *unexp_scope_token = iterctx->pp->promiser;
+            while ((unexp_scope_token = strchr(unexp_scope_token, '.')) != NULL)
+            {
+                char *exp_scope_token = varname;
+                while ((exp_scope_token = strchr(exp_scope_token, '.')) != NULL)
+                {
+                    if (exp_scope_token < exp_namespace_token)
+                    {
+                        // A scope token cannot come before a namespace token
+                        continue;
+                    }
+
+                    *exp_scope_token = '\0';
+                    const char *exp_scope = exp_namespace_token + 1;
+                    const char *unexp_name = unexp_scope_token + 1;
+                    const char *exp_name = exp_scope_token + 1;
+
+                    if (StringStartsWith(unexp_name, exp_name) &&
+                        StringSetContains(scopes, exp_scope))
+                    {
+                        *unexp_namespace_token = CF_MANGLED_NS;
+                        *exp_namespace_token = CF_MANGLED_NS;
+                        *unexp_scope_token = CF_MANGLED_SCOPE;
+                        *exp_scope_token = CF_MANGLED_SCOPE;
+
+                        // We are done!
+                        return;
+                    }
+
+                    // Put things back the way they were
+                    *exp_scope_token = '.';
+                    exp_scope_token += 1;
+                }
+                unexp_scope_token += 1;
+            }
+            exp_namespace_token += 1;
+        }
+        unexp_namespace_token += 1;
+    }
+
+    // In case there is no namespace
+    char *unexp_scope_token = iterctx->pp->promiser;
+    while ((unexp_scope_token = strchr(unexp_scope_token, '.')) != NULL)
+    {
+        char *exp_scope_token = varname;
+        while ((exp_scope_token = strchr(exp_scope_token, '.')) != NULL)
+        {
+            *exp_scope_token = '\0';
+            const char *exp_scope = varname;
+            const char *unexp_name = unexp_scope_token + 1 ;
+            const char *exp_name = exp_scope_token + 1;
+
+            if (StringStartsWith(unexp_name, exp_name) &&
+                StringSetContains(scopes, exp_scope))
+            {
+                *unexp_scope_token = CF_MANGLED_SCOPE;
+                *exp_scope_token = CF_MANGLED_SCOPE;
+
+                // We are done!
+                return;
+            }
+
+            // Put things back the way they were
+            *exp_scope_token = '.';
+            exp_scope_token += 1;
+        }
+        unexp_scope_token += 1;
+    }
+}
+
 /**
  * For each of the wheels to the right of wheel_idx (including this one)
  *
@@ -804,6 +899,11 @@ static void ExpandAndPutWheelVariablesAfter(
     EvalContext *evalctx,
     size_t wheel_idx)
 {
+    assert(iterctx != NULL);
+    assert(iterctx->wheels != NULL);
+    assert(iterctx->pp != NULL);
+    assert(iterctx->pp->promiser != NULL);
+
     /* Buffer to store the expanded wheel variable name, for each wheel. */
     Buffer *tmpbuf = BufferNew();
 
@@ -863,6 +963,12 @@ static void ExpandAndPutWheelVariablesAfter(
                     assert(          wheel->values     != NULL);
                     assert(SeqLength(wheel->values)     > 0);
                     assert(    SeqAt(wheel->values, 0) != NULL);
+
+                    if (!IsMangled(varname))
+                    {
+                        WheelMangleAfterExpandingToList(iterctx, evalctx,
+                                                        (char *) varname);
+                    }
 
                     /* Put the first value of the iterable. */
                     IterListElementVariablePut(evalctx, varname, value_type,
@@ -1046,7 +1152,7 @@ bool PromiseIteratorNext(PromiseIterator *iterctx, EvalContext *evalctx)
                  " count=%zu wheels_num=%zu current_wheel=%zd",
                  iterctx->count, wheels_num, (ssize_t) i);
 
-    /* TODO if not done, then we are re-Put()ing variables in the EvalContect,
+    /* TODO if not done, then we are re-Put()ing variables in the EvalContext,
      *      hopefully overwriting the previous values, but possibly not! */
     }
 

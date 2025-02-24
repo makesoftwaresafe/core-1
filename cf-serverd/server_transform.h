@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -29,6 +29,6 @@
 #include <server.h>
 
 void Summarize(void);
-void KeepPromises(EvalContext *ctx, const Policy *policy, GenericAgentConfig *config);
+void KeepPromises(EvalContext *ctx, const Policy *policy, GenericAgentConfig *config, bool *unresolved_constraints);
 
 #endif

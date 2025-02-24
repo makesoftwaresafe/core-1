@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -45,17 +45,21 @@ extern const BodySyntax CUSTOM_BODY_BLOCK_SYNTAX;
 
 typedef struct PromiseModule
 {
+    pid_t pid;
+    time_t process_start_time;
     IOData fds;
     FILE *input;
     FILE *output;
     char *path;
     char *interpreter;
     bool json;
+    bool action_policy;
     JsonElement *message;
 } PromiseModule;
 
 bool InitializeCustomPromises();
 void FinalizeCustomPromises();
+void TerminateCustomPromises();
 
 Body *FindCustomPromiseType(const Promise *promise);
 PromiseResult EvaluateCustomPromise(ARG_UNUSED EvalContext *ctx, const Promise *pp);

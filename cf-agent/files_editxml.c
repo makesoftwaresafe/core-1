@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -24,7 +24,6 @@
 
 #include <cf3.defs.h>
 
-#include <pcre.h>
 #include <actuator.h>
 #include <eval_context.h>
 #include <promises.h>
@@ -42,6 +41,7 @@
 #include <policy.h>
 #include <ornaments.h>
 #include <verify_classes.h>
+#include <regex.h>              /* StringMatch() */
 
 enum editxmltypesequence
 {
@@ -2017,7 +2017,7 @@ bool XmlCompareToFile(xmlDocPtr doc, char *file, EditDefaults edits)
         return false;
     }
 
-    if (!LoadFileAsXmlDoc(&cmpdoc, file, edits))
+    if (!LoadFileAsXmlDoc(&cmpdoc, file, edits, false))
     {
         return false;
     }
@@ -2981,20 +2981,7 @@ xmlChar *CharToXmlChar(char c[CF_BUFSIZE])
 
 static bool ContainsRegex(const char* rawstring, const char* regex)
 {
-    int ovector[OVECCOUNT], rc;
-    const char *errorstr;
-    int erroffset;
-
-    pcre *rx = pcre_compile(regex, 0, &errorstr, &erroffset, NULL);
-
-    if ((rc = pcre_exec(rx, NULL, rawstring, strlen(rawstring), 0, 0, ovector, OVECCOUNT)) >= 0)
-    {
-        pcre_free(rx);
-        return true;
-    }
-
-    pcre_free(rx);
-    return false;
+    return StringMatch(regex, rawstring, NULL, NULL);
 }
 
 /*********************************************************************/

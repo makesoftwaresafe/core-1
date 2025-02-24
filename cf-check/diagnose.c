@@ -39,6 +39,11 @@ size_t diagnose_files(
 #include <validate.h>
 #include <openssl/rand.h>
 
+/* NOTE: Must be in sync with LMDB_MAXSIZE in libpromises/dbm_lmdb.c. */
+#ifndef LMDB_MAXSIZE
+#define LMDB_MAXSIZE    104857600
+#endif
+
 #define CF_CHECK_CREATE_STRING(name) \
   #name,
 
@@ -276,6 +281,7 @@ static int diagnose(const char *path, bool temporary_redirect, bool validate)
             return errno;
         }
         assert(f_result == stdout);
+        fclose(f_result);
         ret = lmdump(LMDUMP_VALUES_ASCII, path);
     }
     return lmdb_errno_to_cf_check_code(ret);
@@ -524,6 +530,25 @@ static char *follow_symlink(const char *path)
     return xstrdup(target_buf);
 }
 
+bool lmdb_file_needs_rotation(const char *file, int *usage)
+{
+    struct stat sb;
+    if (stat(file, &sb) == 0)
+    {
+        int usage_pct = (((float) sb.st_size) / LMDB_MAXSIZE) * 100;
+        if (usage != NULL)
+        {
+            *usage = usage_pct;
+        }
+        return (usage_pct >= 95);
+    }
+    else
+    {
+        Log(LOG_LEVEL_ERR, "Failed to stat() '%s' when checking usage: %s", file, GetErrorStr());
+        return false;
+    }
+}
+
 /**
  * @param[in]  filenames  DB files to diagnose/check
  * @param[out] corrupt    place to store the resulting sequence of corrupted
@@ -590,18 +615,26 @@ size_t diagnose_files(
 
         if (symlink_target != NULL)
         {
+            int usage;
+            bool needs_rotation = lmdb_file_needs_rotation(symlink_target, &usage);
             Log(LOG_LEVEL_INFO,
-                "Status of '%s' -> '%s': %s\n",
+                "Status of '%s' -> '%s': %s [%d%% usage%s]\n",
                 symlink,
                 symlink_target,
-                CF_CHECK_STRING(r));
+                CF_CHECK_STRING(r),
+                usage,
+                needs_rotation ? ", needs rotation" : "");
         }
         else
         {
+            int usage;
+            bool needs_rotation = lmdb_file_needs_rotation(filename, &usage);
             Log(LOG_LEVEL_INFO,
-                "Status of '%s': %s\n",
+                "Status of '%s': %s [%d%% usage%s]\n",
                 filename,
-                CF_CHECK_STRING(r));
+                CF_CHECK_STRING(r),
+                usage,
+                needs_rotation ? ", needs rotation" : "");
         }
 
 

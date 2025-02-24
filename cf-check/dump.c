@@ -47,7 +47,6 @@ static void print_json_string(
     const char *const data, size_t size, const bool strip_strings)
 {
     assert(data != NULL);
-    assert(size != 0); // Don't know of anything we store which can be size 0
 
     printf("\"");
     if (size == 0)
@@ -104,9 +103,11 @@ static void print_struct_lastseen_quality(
     else
     {
         // TODO: improve names of struct members in QPoint and KeyHostSeen
-        const KeyHostSeen *const quality = value.mv_data;
-        const time_t lastseen = quality->lastseen;
-        const QPoint Q = quality->Q;
+        KeyHostSeen quality;
+        memcpy(&quality, value.mv_data, sizeof(quality));
+        const time_t lastseen = quality.lastseen;
+        const QPoint Q = quality.Q;
+        bool acknowledged = quality.acknowledged;
 
         JsonElement *q_json = JsonObjectCreate(4);
         JsonObjectAppendReal(q_json, "q", Q.q);
@@ -115,6 +116,7 @@ static void print_struct_lastseen_quality(
         JsonObjectAppendReal(q_json, "dq", Q.dq);
 
         JsonElement *top_json = JsonObjectCreate(2);
+        JsonObjectAppendBool(top_json, "acknowledged", acknowledged);
         JsonObjectAppendInteger(top_json, "lastseen", lastseen);
         JsonObjectAppendObject(top_json, "Q", q_json);
 
@@ -137,10 +139,11 @@ static void print_struct_lock_data(
     else
     {
         // TODO: improve names of struct members in LockData
-        const LockData *const lock = value.mv_data;
-        const pid_t pid = lock->pid;
-        const time_t time = lock->time;
-        const time_t process_start_time = lock->process_start_time;
+        LockData lock;
+        memcpy(&lock, value.mv_data, sizeof(lock));
+        const pid_t pid = lock.pid;
+        const time_t time = lock.time;
+        const time_t process_start_time = lock.process_start_time;
 
         JsonElement *json = JsonObjectCreate(3);
         JsonObjectAppendInteger(json, "pid", pid);
@@ -169,8 +172,9 @@ static void print_struct_averages(
     {
         // TODO: clean up Averages
         char **obnames = NULL;
-        const Averages *const averages = value.mv_data;
-        const time_t last_seen = averages->last_seen;
+        Averages averages;
+        memcpy(&averages, value.mv_data, sizeof(averages));
+        const time_t last_seen = averages.last_seen;
 
         obnames = GetObservableNames(tskey_filename);
         JsonElement *all_observables = JsonObjectCreate(CF_OBSERVABLES);
@@ -179,7 +183,7 @@ static void print_struct_averages(
         {
             char *name = obnames[i];
             JsonElement *observable = JsonObjectCreate(4);
-            QPoint Q = averages->Q[i];
+            QPoint Q = averages.Q[i];
 
             JsonObjectAppendReal(observable, "q", Q.q);
             JsonObjectAppendReal(observable, "expect", Q.expect);
@@ -217,7 +221,11 @@ static void print_struct_persistent_class(
     }
     else
     {
-        const PersistentClassInfo *const class_info = value.mv_data;
+        /* Make a copy to ensure proper alignment. We cannot just copy data to a
+         * local PersistentClassInfo variable because it contains a
+         * variable-length string at the end (see the struct definition). */
+        PersistentClassInfo *class_info = malloc(value.mv_size);
+        memcpy(class_info, value.mv_data, value.mv_size);
         const unsigned int expires = class_info->expires;
         const PersistentClassPolicy policy = class_info->policy;
         const char *policy_str;
@@ -251,6 +259,7 @@ static void print_struct_persistent_class(
             // String is not terminated, abort or fall back to default:
             debug_abort_if_reached();
             print_json_string(value.mv_data, value.mv_size, strip_strings);
+            free(class_info);
             return;
         }
 
@@ -265,6 +274,7 @@ static void print_struct_persistent_class(
         JsonWriteCompact(w, top_json);
         FileWriterDetach(w);
         JsonDestroy(top_json);
+        free(class_info);
     }
 }
 
@@ -278,49 +288,55 @@ static void print_struct_or_string(
 {
     if (structs)
     {
-        if (StringEndsWith(file, "cf_lastseen.lmdb")
+        if (StringContains(file, "cf_lastseen.lmdb")
             && StringStartsWith(key.mv_data, "q"))
         {
             print_struct_lastseen_quality(value, strip_strings);
         }
-        else if (StringEndsWith(file, "cf_lock.lmdb"))
+        else if (StringContains(file, "cf_lock.lmdb"))
         {
             print_struct_lock_data(value, strip_strings);
         }
-        else if (StringEndsWith(file, "cf_observations.lmdb"))
+        else if (StringContains(file, "cf_observations.lmdb"))
         {
             if (StringEqual(key.mv_data, "DATABASE_AGE"))
             {
                 assert(sizeof(double) == value.mv_size);
-                const double *const age = value.mv_data;
-                printf("%f", *age);
+                double age;
+                memcpy(&age, value.mv_data, sizeof(age));
+                printf("%f", age);
             }
             else
             {
                 print_struct_averages(value, strip_strings, tskey_filename);
             }
         }
-        else if (StringEndsWith(file, "history.lmdb"))
+        else if (StringEqual(file, "history.lmdb") ||
+                 StringEndsWith(file, FILE_SEPARATOR_STR"history.lmdb") ||
+                 StringEqual(file, "history.lmdb.backup") ||
+                 StringEndsWith(file, FILE_SEPARATOR_STR"history.lmdb.backup"))
         {
             print_struct_averages(value, strip_strings, tskey_filename);
         }
-        else if (StringEndsWith(file, "cf_state.lmdb"))
+        else if (StringContains(file, "cf_state.lmdb"))
         {
             print_struct_persistent_class(value, strip_strings);
         }
-        else if (StringEndsWith(file, "nova_agent_execution.lmdb"))
+        else if (StringContains(file, "nova_agent_execution.lmdb"))
         {
             if (StringEqual(key.mv_data, "delta_gavr"))
             {
                 assert(sizeof(double) == value.mv_size);
-                const double *const average = value.mv_data;
-                printf("%f", *average);
+                double average;
+                memcpy(&average, value.mv_data, sizeof(average));
+                printf("%f", average);
             }
             else if (StringEqual(key.mv_data, "last_exec"))
             {
                 assert(sizeof(time_t) == value.mv_size);
-                const time_t *const last_exec = value.mv_data;
-                printf("%ju", (uintmax_t) (*last_exec));
+                time_t last_exec;
+                memcpy(&last_exec, value.mv_data, sizeof(last_exec));
+                printf("%ju", (uintmax_t) (last_exec));
             }
             else
             {

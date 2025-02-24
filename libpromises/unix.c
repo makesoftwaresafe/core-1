@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -195,7 +195,7 @@ bool ShellCommandReturnsZero(const char *command, ShellType shell)
         }
         else
         {
-            char **argv = ArgSplitCommand(command);
+            char **argv = ArgSplitCommand(command, NULL);
             int devnull;
 
             if (LogGetGlobalLevel() < LOG_LEVEL_INFO)
@@ -246,8 +246,19 @@ static bool GetUserGroupInfoFromGetent(const char *type, const char *query,
                                        char *name, size_t name_size, uintmax_t *id,
                                        LogLevel error_log_level)
 {
+    struct stat sb;
+    char* getent_bin;
+    if (stat("/bin/getent", &sb) == 0)
+    {
+        getent_bin = "/bin/getent";
+    }
+    else
+    {
+        getent_bin = "/usr/bin/getent";
+    }
+
     char buf[CF_BUFSIZE];
-    NDEBUG_UNUSED int print_ret = snprintf(buf, sizeof(buf), "/bin/getent %s %s", type, query);
+    NDEBUG_UNUSED int print_ret = snprintf(buf, sizeof(buf), "%s %s %s", getent_bin, type, query);
     assert(print_ret < sizeof(buf));
 
     FILE *out = cf_popen(buf, "r", OUTPUT_SELECT_STDOUT);

@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -359,6 +359,8 @@ static void *HandleConnection(void *c)
     }
 
     ProtocolVersion protocol_version = ConnectionInfoProtocolVersion(conn->conn_info);
+    Log(LOG_LEVEL_DEBUG, "CFEngine protocol version '%s'", ProtocolVersionString(protocol_version));
+
     if (ProtocolIsTLS(protocol_version))
     {
         bool established = ServerTLSSessionEstablish(conn, NULL);

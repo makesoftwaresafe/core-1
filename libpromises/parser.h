@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -29,6 +29,7 @@
 
 #define PARSER_WARNING_DEPRECATED       (1 << 0)
 #define PARSER_WARNING_REMOVED          (1 << 1)
+#define PARSER_WARNING_SANITY_CHECK     (1 << 2)
 
 #define PARSER_WARNING_ALL              0xfffffff
 

@@ -2,7 +2,7 @@
 
 Thanks for considering contributing to CFEngine! We take pull-requests
 [on GitHub](https://github.com/cfengine/core/pulls) and we have a public
-[bug-tracker](https://tracker.mender.io/projects/CFE/issues/). Discussion
+[bug-tracker](https://northerntech.atlassian.net/projects/CFE/issues/). Discussion
 is taking place on [GitHub Discussions](https://github.com/cfengine/core/discussions)
 and on the [help-cfengine](https://groups.google.com/forum/#!forum/help-cfengine)
 mailing list. You'll find us chatting on the Libera.chat IRC channel
@@ -11,7 +11,7 @@ mailing list. You'll find us chatting on the Libera.chat IRC channel
 Normally, bug fixes have a higher chance of getting accepted than new
 features, but we certainly welcome feature contributions. If you have an idea
 for a new feature, it might be a good idea to open up a feature ticket in
-our [bug-tracker](https://tracker.mender.io/projects/CFE/issues/) and send a
+our [bug-tracker](https://northerntech.atlassian.net/projects/CFE/issues/) and send a
 message to dev-cfengine mailing list, before actually contributing the code,
 in order to get discussion going.
 
@@ -226,7 +226,7 @@ with the commit of the entry you wish to redact:
 
 Most changes should have a ticket number, referring to a ticket on our bug tracker:
 
-https://tracker.mender.io/
+https://northerntech.atlassian.net/
 
 Add it to the commit message as in the example above.
 
@@ -274,10 +274,11 @@ Keep in mind that these are guidelines, there will always be some situations whe
           // ...
       } Name;
       ```
-* Type casts should be separated with one space from the variable:
+* Type casts should be separated with one space from the value:
   ```c
   bool ok = true;
   int res = (int) ok;
+  char *msg = (char *) malloc(64 * sizeof(char *));
   ```
 
 #### Indentation in (auto)make files
@@ -294,7 +295,7 @@ Keep in mind that these are guidelines, there will always be some situations whe
   ```
   AM_CFLAGS = \
   <TAB>$(OPENSSL_CFLAGS) \
-  <TAB>$(PCRE_CFLAGS) \
+  <TAB>$(PCRE2_CFLAGS) \
   <TAB>$(ENTERPRISE_CFLAGS)
   ```
 * Inside an `if`, you cannot indent with tabs (lines will be silently skipped):
@@ -596,7 +597,7 @@ Some examples of often used files (not meant to be an exhaustive list):
 
 Contains the networking layer for CFEngine. All of this was in libpromises previously.
 Ideally it would be completely separate, without depending on libpromises, but we're not there
-yet. See JIRA Epic [CFE-2735](https://tracker.mender.io/browse/CFE-2735) for details on status.
+yet. See JIRA Epic [CFE-2735](https://northerntech.atlassian.net/browse/CFE-2735) for details on status.
 
 
 ### libpromises
@@ -1037,7 +1038,7 @@ a remote etc.)
 If you need to make changes to the `libntech` submodule, you will need to
 submit a PR to that repo:
 
-https://github.com/cfengine/libntech
+https://github.com/NorthernTechHQ/libntech
 
 The `libntech` PR has to be merged, before we can test your changes in `core`.
 

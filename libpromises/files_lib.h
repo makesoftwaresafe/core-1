@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -31,12 +31,17 @@
 void PurgeItemList(Item **list, char *name);
 bool FileWriteOver(char *filename, char *contents);
 
-bool LoadFileAsItemList(Item **liststart, const char *file, EditDefaults edits);
+bool LoadFileAsItemList(Item **liststart, const char *file, EditDefaults edits, bool only_checks);
 
 /**
  * @see     MakeParentDirectoryForPromise()
  */
 bool MakeParentDirectory(const char *parentandchild, bool force, bool *created);
+
+/**
+ * Identical to MakeParentDirectory, but allows you to specify permissions (mode)
+ */
+bool MakeParentDirectoryPerms(const char *parentandchild, bool force, bool *created, mode_t perms_mode);
 
 /**
  * Create an internal directory (never in the changes chroot).
@@ -47,9 +52,12 @@ bool MakeParentInternalDirectory(const char *parentandchild, bool force, bool *c
  * @warning This function will not behave right on Windows if the path
  *          contains double (back)slashes!
  **/
-bool MakeParentDirectoryForPromise(EvalContext *ctx, const Promise *pp, const Attributes *attr,
-                                   PromiseResult *result, const char *parentandchild,
-                                   bool force, bool *created);
+bool MakeParentDirectoryForPromise(EvalContext *ctx, const Promise *pp,
+                                   const Attributes *attr,
+                                   PromiseResult *result,
+                                   const char *parentandchild,
+                                   bool force, bool *created,
+                                   mode_t perms_mode);
 
 void RotateFiles(const char *name, int number);
 void CreateEmptyFile(char *name);

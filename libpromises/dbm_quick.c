@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -204,6 +204,12 @@ bool DBPrivClean(DBPriv *db)
 
     Unlock(db);
     return true;
+}
+
+int DBPrivGetDBUsagePercentage(ARG_UNUSED const char *db_path)
+{
+    Log(LOG_LEVEL_WARNING, "Cannot determine usage of a QuickDB database");
+    return -1;
 }
 
 bool DBPrivRead(DBPriv *db, const void *key, int key_size, void *dest, size_t dest_size)

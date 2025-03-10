@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -80,6 +80,8 @@ typedef struct
             bool eval_functions;
             char *show_classes;
             char *show_variables;
+            bool no_augments;
+            bool no_host_specific;
         } common;
         struct
         {
@@ -89,6 +91,7 @@ typedef struct
             char *bootstrap_ip;
             bool bootstrap_trust_server;
             bool bootstrap_trigger_policy;
+            bool skip_bootstrap_service_start;
             char *show_evaluated_classes;
             char *show_evaluated_variables;
 

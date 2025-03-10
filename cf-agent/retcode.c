@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -86,7 +86,7 @@ bool VerifyCommandRetcode(EvalContext *ctx, int retcode, const Attributes *a, co
 
         if (!matched)
         {
-            cfPS(ctx, info_or_verbose, PROMISE_RESULT_FAIL, pp, a,
+            cfPS(ctx, LOG_LEVEL_ERR, PROMISE_RESULT_FAIL, pp, a,
                  "Command related to promiser '%s' returned code '%d' not defined as promise kept, not kept or repaired; setting to failed",
                  pp->promiser, retcode);
             *result = PromiseResultUpdate(*result, PROMISE_RESULT_FAIL);

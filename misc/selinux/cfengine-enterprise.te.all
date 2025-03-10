@@ -1,0 +1,914 @@
+# SELinux policy module for CFEngine Enterprise
+#
+# This is a complementary module for the upstream cfengine module [1].
+#
+# [1] https://github.com/fedora-selinux/selinux-policy-contrib/blob/rawhide/cfengine.te
+#
+module cfengine-enterprise 1.0;
+
+# 'require' is something like 'import' -- we need to list here all the things
+# used in this policy module
+require {
+	attribute domain;
+	attribute entry_type;
+	attribute file_type;
+	attribute exec_type;
+	attribute non_security_file_type;
+	attribute non_auth_file_type;
+	type bin_t;
+	type cert_t;
+	type devlog_t;
+	type kernel_t;
+	type var_t;
+	type var_log_t;
+	type fs_t;
+	type unconfined_t;
+	type unreserved_port_t;
+	type user_cron_spool_t;
+	type cfengine_serverd_t;
+	type cfengine_execd_exec_t;
+	type net_conf_t;
+	type node_t;
+	type passwd_file_t;
+	type ping_exec_t;
+	type proc_t;
+	type proc_net_t;
+	type proc_xen_t;
+	type proc_security_t;
+	type cfengine_serverd_exec_t;
+	type http_port_t;
+	type ldap_port_t;
+	type postgresql_port_t;
+	type smtp_port_t;
+	type ssh_port_t;
+	type rpm_exec_t;
+	type rpm_var_lib_t;
+	type sssd_t;
+	type sssd_public_t;
+	type sssd_var_lib_t;
+	type sysfs_t;
+	type sysctl_net_t;
+	type system_cron_spool_t;
+	type systemd_unit_file_t;
+	type hugetlbfs_t;
+	type init_exec_t;
+	type init_var_run_t;
+	type ifconfig_t;
+	type ifconfig_exec_t;
+	type journalctl_exec_t;
+	type cfengine_execd_t;
+	type cfengine_log_t;
+	type systemd_systemctl_exec_t;
+	type useradd_exec_t;
+	type cfengine_monitord_t;
+	type dmidecode_exec_t;
+	type init_t;
+	type cfengine_monitord_exec_t;
+	type gpg_exec_t;
+	type shadow_t;
+	type cfengine_var_lib_t;
+	type crontab_exec_t;
+	type hostname_exec_t;
+	type groupadd_exec_t;
+	type shell_exec_t;
+	type semanage_exec_t;
+	type syslogd_var_run_t;
+	type system_dbusd_t;
+	type system_dbusd_var_run_t;
+	type tmp_t;
+	type tmpfs_t;
+	role system_r;
+	type tty_device_t;
+	type user_devpts_t;
+	type sysctl_t;
+	type postfix_etc_t;
+	type postfix_master_t;
+	type postfix_postdrop_exec_t;
+	type postfix_public_t;
+	type postfix_spool_t;
+	type sendmail_exec_t;
+	type sshd_t;
+	type ssh_exec_t;
+	type ssh_home_t;
+	type rpm_script_t;
+	class lockdown { confidentiality integrity };
+	class tcp_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown name_connect accept listen name_bind node_bind };
+	class mctp_socket { ioctl read write create getattr setattr lock relabelfrom relabelto append map bind connect listen accept getopt setopt shutdown recvfrom sendto recv_msg send_msg name_bind };
+	class udp_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown node_bind };
+	class sock_file { create write getattr setattr unlink };
+	class rawip_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class netlink_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class packet_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class unix_stream_socket { create ioctl read getattr lock write setattr append bind connect connectto getopt setopt shutdown };
+	class unix_dgram_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown sendto };
+	class appletalk_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class netlink_route_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown nlmsg_read getopt };
+	class netlink_firewall_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class netlink_tcpdiag_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class netlink_nflog_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class netlink_xfrm_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class netlink_selinux_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class netlink_audit_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class netlink_ip6fw_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class netlink_dnrt_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class netlink_kobject_uevent_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class tun_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class netlink_iscsi_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class netlink_fib_lookup_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class netlink_connector_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class netlink_netfilter_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class netlink_generic_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class netlink_scsitransport_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class netlink_rdma_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class netlink_crypto_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class sctp_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class icmp_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class ax25_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class ipx_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class netrom_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class atmpvc_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class x25_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class xdp_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class rose_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class decnet_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class atmsvc_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class rds_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class irda_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class pppox_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class llc_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class can_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class tipc_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class bluetooth_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class iucv_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class rxrpc_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class isdn_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class phonet_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class ieee802154_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class caif_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class alg_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class nfc_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class vsock_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class kcm_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class qipcrtr_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class smc_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class bridge_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class dccp_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class ib_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class mpls_socket { create ioctl read getattr lock write setattr append bind connect getopt setopt shutdown };
+	class process { setrlimit transition dyntransition execstack execheap execmem signull siginh getattr sigchld };
+	class fd use;
+	class file { execute execute_no_trans getattr ioctl map open read unlink write entrypoint lock link rename append setattr create relabelfrom relabelto watch watch_reads };
+	class fifo_file { create open getattr setattr read write append rename link unlink ioctl lock relabelfrom relabelto };
+	class dir { getattr read search open write add_name remove_name lock ioctl create setattr rmdir };
+	class filesystem getattr;
+	class lnk_file { create getattr read unlink };
+	class capability { dac_read_search sys_module chown dac_read_search dac_override fowner fsetid sys_admin mknod net_raw net_admin sys_nice sys_rawio sys_resource setuid setgid sys_nice sys_ptrace kill net_bind_service };
+	class cap_userns sys_ptrace;
+	class capability2 { mac_admin mac_override block_suspend syslog wake_alarm };
+	class association { sendto recvfrom setcontext polmatch };
+	class security setsecparam;
+	class service { start stop status reload enable disable };
+	class system { module_request };
+	class memprotect mmap_zero;
+	class peer recv;
+	class chr_file { getattr };
+}
+
+
+#============= cfengine_agent_t =============
+# define an *unconfined* domain for the agent (so that it can access/do anything)
+type cfengine_agent_t;
+typeattribute cfengine_agent_t domain;
+role system_r types cfengine_agent_t;
+
+# this is a macro invocation, the file has to be processed with
+# make -f /usr/share/selinux/devel/Makefile
+unconfined_domain(cfengine_agent_t)
+
+# /var/cfengine/bin/cf-agent has the 'cfengine_agent_exec_t' context which is an
+# entrypoint for the 'cfengine_agent_t' domain
+type cfengine_agent_exec_t;
+typeattribute cfengine_agent_exec_t entry_type;
+typeattribute cfengine_agent_exec_t exec_type;
+typeattribute cfengine_agent_exec_t file_type, non_security_file_type, non_auth_file_type;
+role object_r types cfengine_agent_exec_t;
+
+allow cfengine_agent_t cfengine_agent_exec_t:file entrypoint;
+allow cfengine_agent_t cfengine_agent_exec_t:file { ioctl read getattr lock map execute open };
+
+# cf-agent needs to be able to transition into the domain of RPM scriplets
+allow cfengine_agent_t rpm_script_t:process transition;
+
+#============= cfengine_execd_t ==============
+# allow cf-execd to run cf-agent and make sure the forked process run in the
+# unconfined cfengine_agent_t domain
+type_transition cfengine_execd_t cfengine_agent_exec_t:process cfengine_agent_t;
+allow cfengine_execd_t cfengine_agent_t:process transition;
+allow cfengine_execd_t cfengine_agent_exec_t:file { open read execute map getattr };
+
+# allow cf-execd to use/execute libpromises.so
+allow cfengine_execd_t cfengine_var_lib_t:file map;
+allow cfengine_execd_t cfengine_var_lib_t:file execute;
+
+# allow cf-execd to execute cf-promises
+allow cfengine_execd_t cfengine_var_lib_t:file execute_no_trans;
+# allow cf-promises run by cf-execd to getattr everywhere and read symlinks
+files_getattr_all_dirs(cfengine_execd_t)
+files_getattr_all_files(cfengine_execd_t)
+files_read_all_symlinks(cfengine_execd_t)
+
+# TODO: this should not be needed
+allow cfengine_execd_t ssh_port_t:tcp_socket name_connect;
+allow cfengine_execd_t proc_xen_t:dir search;
+
+allow cfengine_execd_t cfengine_log_t:file { read unlink write };
+allow cfengine_execd_t cfengine_log_t:lnk_file { create getattr read unlink };
+allow cfengine_execd_t cfengine_log_t:dir add_name;
+allow cfengine_execd_t cfengine_monitord_exec_t:file getattr;
+allow cfengine_execd_t cfengine_serverd_exec_t:file getattr;
+allow cfengine_execd_t cfengine_hub_exec_t:file getattr;
+allow cfengine_execd_t cfengine_reactor_exec_t:file getattr;
+
+# allow cf-execd to work with local/UNIX sockets
+allow cfengine_execd_t cfengine_var_lib_t:sock_file { create unlink getattr setattr };
+
+allow cfengine_execd_t self:capability sys_ptrace;
+allow cfengine_execd_t self:cap_userns sys_ptrace;
+
+allow cfengine_execd_t crontab_exec_t:file getattr;
+allow cfengine_execd_t dmidecode_exec_t:file getattr;
+allow cfengine_execd_t fs_t:filesystem getattr;
+allow cfengine_execd_t gpg_exec_t:file getattr;
+allow cfengine_execd_t groupadd_exec_t:file getattr;
+allow cfengine_execd_t hostname_exec_t:file getattr;
+allow cfengine_execd_t init_exec_t:file getattr;
+allow cfengine_execd_t init_t:unix_stream_socket connectto;
+allow cfengine_execd_t journalctl_exec_t:file getattr;
+allow cfengine_execd_t ping_exec_t:file getattr;
+allow cfengine_execd_t proc_net_t:file { getattr open read };
+allow cfengine_execd_t proc_net_t:lnk_file { getattr read };
+allow cfengine_execd_t proc_security_t:file { getattr open read };
+allow cfengine_execd_t rpm_exec_t:file getattr;
+allow cfengine_execd_t rpm_var_lib_t:dir search;
+allow cfengine_execd_t rpm_var_lib_t:file open;
+allow cfengine_execd_t self:capability dac_read_search;
+allow cfengine_execd_t shadow_t:file { getattr open read };
+allow cfengine_execd_t smtp_port_t:tcp_socket name_connect;
+allow cfengine_execd_t system_cron_spool_t:dir getattr;
+allow cfengine_execd_t systemd_systemctl_exec_t:file getattr;
+allow cfengine_execd_t systemd_unit_file_t:dir search;
+allow cfengine_execd_t systemd_unit_file_t:file getattr;
+allow cfengine_execd_t unreserved_port_t:tcp_socket name_connect;
+allow cfengine_execd_t user_cron_spool_t:dir getattr;
+allow cfengine_execd_t useradd_exec_t:file getattr;
+allow cfengine_execd_t var_t:dir read;
+allow cfengine_execd_t semanage_exec_t:file getattr;
+allow cfengine_execd_t tty_device_t:chr_file getattr;
+allow cfengine_execd_t user_devpts_t:chr_file getattr;
+allow cfengine_execd_t ssh_exec_t:file getattr;
+
+#============= cfengine_monitord_t ==============
+# allow cf-monitord to use/execute libpromises.so
+allow cfengine_monitord_t cfengine_var_lib_t:file map;
+allow cfengine_monitord_t cfengine_var_lib_t:file execute;
+
+# allow cf-monitord to execute cf-promises
+allow cfengine_monitord_t cfengine_var_lib_t:file execute_no_trans;
+# allow cf-promises run by cf-monitord to getattr everywhere and read symlinks
+files_getattr_all_dirs(cfengine_monitord_t)
+files_getattr_all_files(cfengine_monitord_t)
+files_read_all_symlinks(cfengine_monitord_t)
+
+allow cfengine_monitord_t cfengine_execd_exec_t:file getattr;
+allow cfengine_monitord_t cfengine_serverd_exec_t:file getattr;
+allow cfengine_monitord_t cfengine_agent_exec_t:file getattr;
+allow cfengine_monitord_t cfengine_hub_exec_t:file getattr;
+allow cfengine_monitord_t cfengine_reactor_exec_t:file getattr;
+
+allow cfengine_monitord_t var_log_t:file { open read };
+# cf-monitord collects arbitrary system data so needs complete access to filesystems and files
+fs_unconfined(cfengine_monitord_t)
+files_unconfined(cfengine_monitord_t)
+
+allow cfengine_monitord_t self:capability { dac_override dac_read_search sys_ptrace };
+allow cfengine_monitord_t self:cap_userns sys_ptrace;
+
+allow cfengine_monitord_t crontab_exec_t:file getattr;
+allow cfengine_monitord_t dmidecode_exec_t:file getattr;
+allow cfengine_monitord_t groupadd_exec_t:file getattr;
+allow cfengine_monitord_t hostname_exec_t:file getattr;
+allow cfengine_monitord_t init_exec_t:file getattr;
+allow cfengine_monitord_t journalctl_exec_t:file getattr;
+allow cfengine_monitord_t ping_exec_t:file getattr;
+allow cfengine_monitord_t rpm_exec_t:file getattr;
+allow cfengine_monitord_t shadow_t:file getattr;
+allow cfengine_monitord_t systemd_systemctl_exec_t:file getattr;
+allow cfengine_monitord_t user_cron_spool_t:dir getattr;
+allow cfengine_monitord_t useradd_exec_t:file getattr;
+allow cfengine_monitord_t var_t:dir read;
+allow cfengine_monitord_t semanage_exec_t:file getattr;
+allow cfengine_monitord_t tty_device_t:chr_file getattr;
+allow cfengine_monitord_t user_devpts_t:chr_file getattr;
+allow cfengine_monitord_t sysctl_t:dir read;
+allow cfengine_monitord_t ssh_exec_t:file getattr;
+allow cfengine_monitord_t proc_net_t:file { getattr open read };
+allow cfengine_monitord_t proc_security_t:file { getattr open read };
+
+# TODO: this should not be needed
+allow cfengine_monitord_t proc_xen_t:dir search;
+
+#============= cfengine_serverd_t ==============
+# allow cf-serverd to run cf-agent and make sure the forked process run in the
+# unconfined cfengine_agent_t domain
+allow cfengine_serverd_t cfengine_agent_exec_t:file { open read execute execute_no_trans map getattr };
+type_transition cfengine_serverd_t cfengine_agent_exec_t:process cfengine_agent_t;
+allow cfengine_serverd_t cfengine_agent_t:process transition;
+
+# allow cf-serverd to use/execute libpromises.so
+allow cfengine_serverd_t cfengine_var_lib_t:file map;
+allow cfengine_serverd_t cfengine_var_lib_t:file execute;
+
+# allow cf-serverd to execute cf-promises
+allow cfengine_serverd_t cfengine_var_lib_t:file execute_no_trans;
+# allow cf-promises run by cf-serverd to getattr everywhere and read symlinks
+files_getattr_all_dirs(cfengine_serverd_t)
+files_getattr_all_files(cfengine_serverd_t)
+files_read_all_symlinks(cfengine_serverd_t)
+
+# allow cf-serverd to connect to the CFEngine port and to write into a local socket (in case of
+# call-collect on hosts and the hub itself, respectively)
+allow cfengine_serverd_t unreserved_port_t:tcp_socket name_connect;
+allow cfengine_serverd_t cfengine_var_lib_t:sock_file { getattr write };
+allow cfengine_serverd_t cfengine_hub_t:unix_stream_socket connectto;
+
+# allow cf-serverd to set its own limits, e.g. def.control_server_maxconnections
+allow cfengine_serverd_t self:capability sys_resource;
+
+# TODO: this should not be needed
+allow cfengine_serverd_t ssh_port_t:tcp_socket name_connect;
+allow cfengine_serverd_t proc_xen_t:dir search;
+
+allow cfengine_serverd_t cfengine_execd_exec_t:file getattr;
+allow cfengine_serverd_t cfengine_monitord_exec_t:file getattr;
+allow cfengine_serverd_t cfengine_hub_exec_t:file getattr;
+allow cfengine_serverd_t cfengine_reactor_exec_t:file getattr;
+allow cfengine_serverd_t cfengine_log_t:lnk_file getattr;
+
+allow cfengine_serverd_t crontab_exec_t:file getattr;
+allow cfengine_serverd_t dmidecode_exec_t:file getattr;
+allow cfengine_serverd_t fs_t:filesystem getattr;
+allow cfengine_serverd_t groupadd_exec_t:file getattr;
+allow cfengine_serverd_t hostname_exec_t:file getattr;
+allow cfengine_serverd_t init_exec_t:file getattr;
+allow cfengine_serverd_t init_t:dir { getattr open search read } ; # /proc/1 analysis
+allow cfengine_serverd_t init_t:file { getattr open read };
+allow cfengine_serverd_t journalctl_exec_t:file getattr;
+allow cfengine_serverd_t ping_exec_t:file getattr;
+allow cfengine_serverd_t proc_net_t:file { getattr open read };
+allow cfengine_serverd_t proc_net_t:lnk_file { getattr read };
+allow cfengine_serverd_t proc_security_t:file { getattr open read };
+allow cfengine_serverd_t rpm_exec_t:file getattr;
+allow cfengine_serverd_t self:process setrlimit;
+allow cfengine_serverd_t self:tcp_socket { accept listen };
+allow cfengine_serverd_t shadow_t:file getattr;
+allow cfengine_serverd_t systemd_systemctl_exec_t:file getattr;
+allow cfengine_serverd_t unreserved_port_t:tcp_socket name_bind;
+allow cfengine_serverd_t user_cron_spool_t:dir getattr;
+allow cfengine_serverd_t useradd_exec_t:file getattr;
+allow cfengine_serverd_t var_t:dir read;
+allow cfengine_serverd_t semanage_exec_t:file getattr;
+allow cfengine_serverd_t ssh_exec_t:file getattr;
+
+
+#============= cfengine_hub_t ==============
+type cfengine_hub_t;
+typeattribute cfengine_hub_t domain;
+role system_r types cfengine_hub_t;
+
+# /var/cfengine/bin/cf-hub has the 'cfengine_hub_exec_t' context which is an
+# entrypoint for the 'cfengine_hub_t' domain
+type cfengine_hub_exec_t;
+typeattribute cfengine_hub_exec_t entry_type;
+typeattribute cfengine_hub_exec_t exec_type;
+typeattribute cfengine_hub_exec_t file_type, non_security_file_type, non_auth_file_type;
+role object_r types cfengine_hub_exec_t;
+
+type_transition init_t cfengine_hub_exec_t:process cfengine_hub_t;
+allow init_t cfengine_hub_t:process transition;
+allow init_t cfengine_hub_exec_t:file { execute open read };
+allow init_t cfengine_hub_t:process siginh;
+
+allow cfengine_hub_t cfengine_hub_exec_t:file entrypoint;
+allow cfengine_hub_t cfengine_hub_exec_t:file { ioctl read getattr lock map execute open };
+
+# allow cf-hub to use/execute libpromises.so
+allow cfengine_hub_t cfengine_var_lib_t:file map;
+allow cfengine_hub_t cfengine_var_lib_t:file execute;
+allow cfengine_hub_t cfengine_var_lib_t:file { getattr open read };
+
+# allow cf-hub to read/write from/to a socket owned by cf-serverd (passed in
+# case of call-collect)
+allow cfengine_hub_t cfengine_serverd_t:tcp_socket { read write setopt };
+
+allow cfengine_hub_t cfengine_agent_exec_t:file getattr;
+allow cfengine_hub_t cfengine_execd_exec_t:file getattr;
+allow cfengine_hub_t cfengine_monitord_exec_t:file getattr;
+allow cfengine_hub_t cfengine_serverd_exec_t:file getattr;
+allow cfengine_hub_t cfengine_reactor_exec_t:file getattr;
+
+allow cfengine_hub_t cfengine_postgres_t:unix_stream_socket connectto;
+allow cfengine_hub_t unreserved_port_t:tcp_socket name_connect;
+
+allow cfengine_hub_t cfengine_log_t:dir getattr;
+allow cfengine_hub_t cfengine_var_lib_t:dir { add_name create getattr open read search write remove_name };
+allow cfengine_hub_t cfengine_var_lib_t:file { create ioctl lock write unlink };
+allow cfengine_hub_t cfengine_var_lib_t:lnk_file { getattr read };
+allow cfengine_hub_t cfengine_var_lib_t:sock_file { create unlink };
+
+allow cfengine_hub_t bin_t:file map;
+allow cfengine_hub_t bin_t:file { execute execute_no_trans };
+allow cfengine_hub_t cert_t:dir { getattr open read search };
+allow cfengine_hub_t cert_t:file { getattr open read };
+allow cfengine_hub_t crontab_exec_t:file getattr;
+allow cfengine_hub_t devlog_t:lnk_file read;
+allow cfengine_hub_t devlog_t:sock_file write;
+allow cfengine_hub_t dmidecode_exec_t:file getattr;
+allow cfengine_hub_t fs_t:filesystem getattr;
+allow cfengine_hub_t groupadd_exec_t:file getattr;
+allow cfengine_hub_t hostname_exec_t:file getattr;
+allow cfengine_hub_t init_exec_t:file getattr;
+allow cfengine_hub_t init_t:dir { getattr open read search };
+allow cfengine_hub_t init_t:file { getattr open read };
+allow cfengine_hub_t init_t:unix_stream_socket { ioctl getattr read write }; # systemd, PAM?
+allow cfengine_hub_t init_var_run_t:dir search;
+allow cfengine_hub_t journalctl_exec_t:file getattr;
+allow cfengine_hub_t kernel_t:unix_dgram_socket sendto;
+allow cfengine_hub_t net_conf_t:file { getattr open read };
+allow cfengine_hub_t passwd_file_t:file { getattr open read };
+allow cfengine_hub_t ping_exec_t:file getattr;
+allow cfengine_hub_t proc_net_t:file { getattr open read };
+allow cfengine_hub_t proc_net_t:lnk_file { getattr read };
+allow cfengine_hub_t proc_security_t:file { getattr open read };
+allow cfengine_hub_t proc_t:dir read;
+allow cfengine_hub_t rpm_exec_t:file getattr;
+allow cfengine_hub_t self:capability dac_override;
+allow cfengine_hub_t self:tcp_socket { connect create getopt setopt read write };
+allow cfengine_hub_t self:udp_socket { connect create getattr ioctl setopt read write };
+allow cfengine_hub_t self:netlink_route_socket { create getopt setopt bind getattr read write };
+allow cfengine_hub_t self:unix_dgram_socket { create connect read write };
+allow cfengine_hub_t semanage_exec_t:file getattr;
+allow cfengine_hub_t shadow_t:file getattr;
+allow cfengine_hub_t sssd_public_t:dir search;
+allow cfengine_hub_t sssd_public_t:file map;
+allow cfengine_hub_t sssd_public_t:file { getattr open read };
+allow cfengine_hub_t sssd_t:unix_stream_socket connectto;
+allow cfengine_hub_t sssd_var_lib_t:dir search;
+allow cfengine_hub_t sssd_var_lib_t:sock_file write;
+allow cfengine_hub_t sysctl_net_t:dir search;
+allow cfengine_hub_t sysfs_t:dir read;
+allow cfengine_hub_t sysfs_t:file { getattr open read };
+allow cfengine_hub_t syslogd_var_run_t:dir search;
+allow cfengine_hub_t systemd_systemctl_exec_t:file getattr;
+allow cfengine_hub_t tmp_t:sock_file write;
+allow cfengine_hub_t user_cron_spool_t:dir getattr;
+allow cfengine_hub_t useradd_exec_t:file getattr;
+allow cfengine_hub_t var_t:dir read;
+allow cfengine_hub_t ssh_exec_t:file getattr;
+
+# Use of the TLS kernel module
+allow cfengine_hub_t kernel_t:system module_request;
+
+# TODO: these should not be needed
+# this is a macro invocation, the file has to be processed with
+# make -f /usr/share/selinux/devel/Makefile
+sysnet_domtrans_ifconfig(cfengine_hub_t)
+allow cfengine_hub_t shell_exec_t:file map;
+allow cfengine_hub_t shell_exec_t:file { execute execute_no_trans };
+allow cfengine_hub_t proc_xen_t:dir search;
+
+
+#============= cfengine_postgres_t ==============
+type cfengine_postgres_t;
+typeattribute cfengine_postgres_t domain;
+role system_r types cfengine_postgres_t;
+
+# /var/cfengine/bin/cf-postgres has the 'cfengine_postgres_exec_t' context which is an
+# entrypoint for the 'cfengine_postgres_t' domain
+type cfengine_postgres_exec_t;
+typeattribute cfengine_postgres_exec_t entry_type;
+typeattribute cfengine_postgres_exec_t exec_type;
+typeattribute cfengine_postgres_exec_t file_type, non_security_file_type, non_auth_file_type;
+role object_r types cfengine_postgres_exec_t;
+
+type_transition init_t cfengine_postgres_exec_t:process cfengine_postgres_t;
+allow init_t cfengine_postgres_t:process transition;
+allow init_t cfengine_postgres_exec_t:file { execute open read };
+allow init_t cfengine_postgres_t:process siginh;
+
+allow cfengine_postgres_t cfengine_postgres_exec_t:file entrypoint;
+allow cfengine_postgres_t cfengine_postgres_exec_t:file { ioctl read getattr lock map execute open };
+
+# TODO: Why are 'map', 'execute' and 'execute_no_trans' needed for postgres?
+allow cfengine_postgres_t cfengine_var_lib_t:file map;
+allow cfengine_postgres_t cfengine_var_lib_t:file { create execute execute_no_trans getattr link open read rename unlink write rename };
+allow cfengine_postgres_t cfengine_var_lib_t:lnk_file read;
+allow cfengine_postgres_t cfengine_var_lib_t:dir { add_name getattr open create read remove_name search write };
+
+allow cfengine_postgres_t postgresql_port_t:tcp_socket name_bind;
+
+allow cfengine_postgres_t cert_t:dir { getattr open read search };
+allow cfengine_postgres_t cert_t:file { getattr open read };
+allow cfengine_postgres_t hugetlbfs_t:file map;
+allow cfengine_postgres_t hugetlbfs_t:file { read write };
+allow cfengine_postgres_t init_t:unix_stream_socket { getattr ioctl read write }; # pg_ctl, systemd, PAM?
+allow cfengine_postgres_t init_var_run_t:dir search;
+allow cfengine_postgres_t system_dbusd_var_run_t:dir search;
+allow cfengine_postgres_t net_conf_t:file { getattr open read };
+allow cfengine_postgres_t node_t:tcp_socket node_bind;
+allow cfengine_postgres_t node_t:udp_socket node_bind;
+allow cfengine_postgres_t proc_t:file { getattr open read };
+allow cfengine_postgres_t self:netlink_route_socket { bind create getattr nlmsg_read read write };
+allow cfengine_postgres_t self:tcp_socket { bind create listen setopt read write };
+allow cfengine_postgres_t self:udp_socket { bind connect create getattr getopt read write };
+allow cfengine_postgres_t self:unix_stream_socket connectto;
+allow cfengine_postgres_t sssd_public_t:dir search;
+allow cfengine_postgres_t sssd_public_t:file map;
+allow cfengine_postgres_t sssd_public_t:file { getattr open read };
+allow cfengine_postgres_t sssd_var_lib_t:sock_file write;
+allow cfengine_postgres_t sssd_var_lib_t:dir search;
+allow cfengine_postgres_t sssd_t:unix_stream_socket connectto;
+allow cfengine_postgres_t tmp_t:dir { add_name write remove_name };
+allow cfengine_postgres_t tmp_t:file { create open write unlink };
+allow cfengine_postgres_t tmp_t:sock_file { create setattr unlink write };
+allow cfengine_postgres_t tmpfs_t:dir { add_name write remove_name };
+allow cfengine_postgres_t tmpfs_t:file { create open read write map unlink getattr };
+allow cfengine_postgres_t tmpfs_t:filesystem getattr;
+allow cfengine_postgres_t var_log_t:file { append open };
+
+# so that PostgreSQL can check if cfpostgres user/group exists
+allow cfengine_postgres_t passwd_file_t:file { open read getattr };
+
+# Needed for systemd to be able to check PostgreSQL's PID file
+allow init_t cfengine_var_lib_t:dir { read remove_name write };
+allow init_t cfengine_var_lib_t:file { getattr open read unlink ioctl };
+
+# TODO: these should not be needed
+allow cfengine_postgres_t shell_exec_t:file map;
+allow cfengine_postgres_t shell_exec_t:file { execute execute_no_trans };
+
+
+#============= cfengine_httpd_t ==============
+type cfengine_httpd_t;
+typeattribute cfengine_httpd_t domain;
+role system_r types cfengine_httpd_t;
+
+# /var/cfengine/httpd/bin/* files have the 'cfengine_httpd_exec_t' context which
+# is an entrypoint for the 'cfengine_httpd_t' domain
+type cfengine_httpd_exec_t;
+typeattribute cfengine_httpd_exec_t entry_type;
+typeattribute cfengine_httpd_exec_t exec_type;
+typeattribute cfengine_httpd_exec_t file_type, non_security_file_type, non_auth_file_type;
+role object_r types cfengine_httpd_exec_t;
+
+type_transition init_t cfengine_httpd_exec_t:process cfengine_httpd_t;
+allow init_t cfengine_httpd_t:process transition;
+allow init_t cfengine_httpd_exec_t:file { execute getattr open read };
+allow init_t cfengine_httpd_t:process siginh;
+
+allow cfengine_httpd_t cfengine_httpd_exec_t:file entrypoint;
+allow cfengine_httpd_t cfengine_httpd_exec_t:file { ioctl read getattr lock map execute open };
+
+allow cfengine_httpd_t cert_t:dir { getattr open read search };
+allow cfengine_httpd_t cert_t:file { getattr open read };
+allow cfengine_httpd_t cert_t:lnk_file read;
+allow cfengine_httpd_t cfengine_httpd_exec_t:file execute_no_trans;
+allow cfengine_httpd_t cfengine_postgres_t:unix_stream_socket connectto;
+
+# allow httpd to use our custom compiled module
+allow cfengine_httpd_t cfengine_var_lib_t:file map;
+allow cfengine_httpd_t cfengine_var_lib_t:file { append create execute getattr ioctl lock open read setattr unlink write rename };
+
+allow cfengine_httpd_t cfengine_var_lib_t:dir { add_name getattr open read remove_name search write create };
+allow cfengine_httpd_t cfengine_var_lib_t:lnk_file read;
+
+# allow httpd/php to work with cf-execd sockets
+allow cfengine_httpd_t cfengine_execd_t:unix_stream_socket connectto;
+allow cfengine_httpd_t cfengine_var_lib_t:sock_file write;
+
+# allow httpd/php to upload notification/alert scripts
+allow cfengine_httpd_t cfengine_action_script_exec_t:dir { add_name getattr search write remove_name };
+allow cfengine_httpd_t cfengine_action_script_exec_t:file { create write setattr unlink };
+
+# sending reports via email
+allow cfengine_httpd_t postfix_etc_t:dir { getattr open read search };
+allow cfengine_httpd_t postfix_etc_t:file { getattr open read };
+allow cfengine_httpd_t postfix_master_t:unix_stream_socket connectto;
+allow cfengine_httpd_t postfix_postdrop_exec_t:file { execute execute_no_trans map open read };
+allow cfengine_httpd_t postfix_public_t:dir search;
+allow cfengine_httpd_t postfix_public_t:sock_file { getattr write };
+allow cfengine_httpd_t postfix_spool_t:dir { add_name remove_name search write };
+allow cfengine_httpd_t postfix_spool_t:file { create getattr open read rename setattr write };
+allow cfengine_httpd_t self:process setrlimit;
+allow cfengine_httpd_t sendmail_exec_t:file { execute execute_no_trans getattr map open read };
+
+allow cfengine_httpd_t devlog_t:lnk_file read;
+allow cfengine_httpd_t devlog_t:sock_file write;
+allow cfengine_httpd_t http_port_t:tcp_socket { name_bind name_connect };
+allow cfengine_httpd_t init_t:dbus send_msg;
+allow cfengine_httpd_t init_t:unix_stream_socket { getattr ioctl read write }; # apachectl
+allow cfengine_httpd_t init_var_run_t:dir search;
+allow cfengine_httpd_t kernel_t:unix_dgram_socket sendto;
+allow cfengine_httpd_t net_conf_t:file { getattr open read };
+allow cfengine_httpd_t node_t:tcp_socket node_bind;
+allow cfengine_httpd_t self:capability { dac_override dac_read_search kill net_bind_service setgid setuid net_admin };
+allow cfengine_httpd_t self:netlink_route_socket { bind create getattr nlmsg_read read write };
+allow cfengine_httpd_t self:process execmem;
+allow cfengine_httpd_t unconfined_t:process signull;
+allow cfengine_httpd_t self:tcp_socket { accept bind connect create getattr getopt listen setopt shutdown read write ioctl setattr append name_connect };
+allow cfengine_httpd_t self:udp_socket { create ioctl read getattr write setattr append connect getopt setopt shutdown setattr };
+allow cfengine_httpd_t self:unix_dgram_socket { connect create };
+allow cfengine_httpd_t sssd_public_t:dir search;
+allow cfengine_httpd_t sssd_public_t:file map;
+allow cfengine_httpd_t sssd_public_t:file { getattr open read };
+allow cfengine_httpd_t sssd_t:unix_stream_socket connectto;
+allow cfengine_httpd_t sssd_var_lib_t:dir search;
+allow cfengine_httpd_t sssd_var_lib_t:sock_file write;
+allow cfengine_httpd_t syslogd_var_run_t:dir search;
+allow cfengine_httpd_t tmp_t:sock_file write;
+allow cfengine_httpd_t tmp_t:file { create setattr unlink write rename open };
+allow cfengine_httpd_t tmp_t:dir { add_name remove_name write read };
+allow cfengine_httpd_t var_t:dir read;
+
+# apparently, httpd creates some temporary bits in /tmp that it needs to mmap()
+allow cfengine_httpd_t tmp_t:file map;
+
+# httpd/PHP needs to be able to send emails via an external SMTP server
+allow cfengine_httpd_t smtp_port_t:tcp_socket name_connect;
+
+# httpd/PHP needs to be able to contact LDAP servers
+allow cfengine_httpd_t ldap_port_t:tcp_socket name_connect;
+
+# Bidirectional DBus communication between httpd and systemd
+allow cfengine_httpd_t system_dbusd_t:dbus send_msg;
+allow cfengine_httpd_t system_dbusd_t:unix_stream_socket connectto;
+allow cfengine_httpd_t system_dbusd_var_run_t:dir search;
+allow cfengine_httpd_t system_dbusd_var_run_t:sock_file write;
+allow init_t cfengine_httpd_t:dbus send_msg;
+
+# allow httpd to run 'ps' and thus gather information about all running processes on the system
+# this is a macro invocation, the file has to be processed with
+# make -f /usr/share/selinux/devel/Makefile
+ps_process_pattern(cfengine_httpd_t, domain)
+allow cfengine_httpd_t bin_t:file { map execute execute_no_trans };
+allow cfengine_httpd_t proc_t:dir read;
+allow cfengine_httpd_t proc_t:file { open read };
+
+# TODO: these should not be needed
+allow cfengine_httpd_t passwd_file_t:file { getattr open read };
+allow cfengine_httpd_t shell_exec_t:file map;
+allow cfengine_httpd_t shell_exec_t:file { execute execute_no_trans };
+
+
+#============= cfengine_apachectl_t ==============
+type cfengine_apachectl_t;
+typeattribute cfengine_apachectl_t domain;
+role system_r types cfengine_apachectl_t;
+
+# /var/cfengine/httpd/bin/apachectl has the 'cfengine_apachectl_exec_t' context which
+# is an entrypoint for the 'cfengine_apachectl_t' domain
+type cfengine_apachectl_exec_t;
+typeattribute cfengine_apachectl_exec_t entry_type;
+typeattribute cfengine_apachectl_exec_t exec_type;
+typeattribute cfengine_apachectl_exec_t file_type, non_security_file_type, non_auth_file_type;
+role object_r types cfengine_apachectl_exec_t;
+
+# allow transitions from init_t (systemd) to cfengine_apachectl_t to cfengine_httpd_t
+type_transition init_t cfengine_apachectl_exec_t:process cfengine_apachectl_t;
+allow init_t cfengine_apachectl_t:process transition;
+allow init_t cfengine_apachectl_exec_t:file { execute getattr open read };
+allow init_t cfengine_apachectl_t:process siginh;
+
+type_transition cfengine_apachectl_t cfengine_httpd_exec_t:process cfengine_httpd_t;
+allow cfengine_apachectl_t cfengine_httpd_t:process transition;
+allow cfengine_apachectl_t cfengine_httpd_exec_t:file { execute getattr open read };
+allow cfengine_apachectl_t cfengine_httpd_t:process siginh;
+
+allow cfengine_apachectl_t cfengine_apachectl_exec_t:file entrypoint;
+allow cfengine_apachectl_t cfengine_apachectl_exec_t:file { ioctl read getattr lock map execute open };
+
+allow cfengine_apachectl_t cfengine_var_lib_t:dir search;
+allow cfengine_apachectl_t cfengine_var_lib_t:file { getattr open read };
+allow cfengine_apachectl_t init_t:unix_stream_socket ioctl;
+allow cfengine_apachectl_t passwd_file_t:file { getattr open read };
+allow cfengine_apachectl_t shell_exec_t:file { map execute };
+allow cfengine_apachectl_t sssd_public_t:dir search;
+allow cfengine_apachectl_t sssd_public_t:file { getattr open read map };
+allow cfengine_apachectl_t sssd_t:unix_stream_socket connectto;
+allow cfengine_apachectl_t sssd_var_lib_t:dir search;
+allow cfengine_apachectl_t sssd_var_lib_t:sock_file write;
+allow cfengine_apachectl_t bin_t:file { execute execute_no_trans map };
+allow cfengine_apachectl_t proc_t:dir read;
+allow cfengine_apachectl_t proc_t:file { open read };
+
+# allow apachectl to run 'ps' and thus gather information about all running processes on the system
+# this is a macro invocation, the file has to be processed with
+# make -f /usr/share/selinux/devel/Makefile
+ps_process_pattern(cfengine_apachectl_t, domain)
+# ps_process_pattern() above doesn't include needed sys_ptrace capability for apachectl to run 'ps'
+allow cfengine_apachectl_t self:cap_userns sys_ptrace;
+
+#============= cfengine_reactor_t ==============
+type cfengine_reactor_t;
+typeattribute cfengine_reactor_t domain;
+role system_r types cfengine_reactor_t;
+
+# /var/cfengine/bin/cf-reactor has the 'cfengine_reactor_exec_t' context which is an
+# entrypoint for the 'cfengine_reactor_t' domain
+type cfengine_reactor_exec_t;
+typeattribute cfengine_reactor_exec_t entry_type;
+typeattribute cfengine_reactor_exec_t exec_type;
+typeattribute cfengine_reactor_exec_t file_type, non_security_file_type, non_auth_file_type;
+role object_r types cfengine_reactor_exec_t;
+
+type_transition init_t cfengine_reactor_exec_t:process cfengine_reactor_t;
+allow init_t cfengine_reactor_t:process transition;
+allow init_t cfengine_reactor_exec_t:file { execute open read };
+allow init_t cfengine_reactor_t:process siginh;
+
+type_transition cfengine_reactor_t cfengine_cfbs_exec_t:process cfengine_cfbs_t;
+allow cfengine_reactor_t cfengine_cfbs_t:process transition;
+allow cfengine_reactor_t cfengine_cfbs_exec_t:file { execute open read };
+
+# cf-reactor runs PHP code to evaluate alerts (as cfapache user)
+allow cfengine_reactor_t cfengine_httpd_exec_t:file { execute execute_no_trans getattr open read map };
+allow cfengine_reactor_t self:capability { setgid setuid };
+allow cfengine_reactor_t self:process { execmem setrlimit };
+
+allow cfengine_reactor_t cfengine_reactor_exec_t:file entrypoint;
+allow cfengine_reactor_t cfengine_reactor_exec_t:file { ioctl read getattr lock map execute open };
+
+# allow cf-reactor to use/execute libpromises.so
+allow cfengine_reactor_t cfengine_var_lib_t:file map;
+allow cfengine_reactor_t cfengine_var_lib_t:file execute;
+allow cfengine_reactor_t cfengine_var_lib_t:file { getattr open read };
+
+allow cfengine_reactor_t cfengine_postgres_t:unix_stream_socket connectto;
+
+allow cfengine_reactor_t cfengine_log_t:dir getattr;
+allow cfengine_reactor_t cfengine_var_lib_t:dir { add_name getattr create open read search write remove_name setattr rmdir };
+allow cfengine_reactor_t cfengine_var_lib_t:file { create ioctl lock write unlink append setattr link rename execute execute_no_trans };
+allow cfengine_reactor_t cfengine_var_lib_t:lnk_file { getattr read create unlink };
+
+allow cfengine_reactor_t passwd_file_t:file { open read getattr };
+allow cfengine_reactor_t self:capability { dac_override dac_read_search chown fsetid };
+allow cfengine_reactor_t self:unix_dgram_socket { create connect };
+allow cfengine_reactor_t sssd_var_lib_t:dir search;
+allow cfengine_reactor_t sssd_var_lib_t:sock_file write;
+allow cfengine_reactor_t sssd_public_t:dir search;
+allow cfengine_reactor_t sssd_public_t:file { open read getattr map };
+allow cfengine_reactor_t sssd_t:unix_stream_socket connectto;
+allow cfengine_reactor_t tmp_t:sock_file write;
+allow cfengine_reactor_t tmp_t:dir { add_name remove_name read write };
+allow cfengine_reactor_t tmp_t:file { create open setattr unlink write };
+allow cfengine_reactor_t devlog_t:sock_file write;
+allow cfengine_reactor_t devlog_t:lnk_file read;
+allow cfengine_reactor_t syslogd_var_run_t:dir search;
+allow cfengine_reactor_t kernel_t:unix_dgram_socket sendto;
+allow cfengine_reactor_t kernel_t:unix_stream_socket connectto;
+allow cfengine_reactor_t init_var_run_t:dir search;
+allow cfengine_reactor_t init_t:unix_stream_socket { getattr ioctl };
+
+allow cfengine_reactor_t var_t:dir read;
+allow cfengine_reactor_t bin_t:file { execute execute_no_trans map };
+allow cfengine_reactor_t fs_t:filesystem getattr;
+allow cfengine_reactor_t shell_exec_t:file map;
+allow cfengine_reactor_t shell_exec_t:file { execute execute_no_trans };
+
+allow cfengine_reactor_t cert_t:dir { getattr open read search };
+allow cfengine_reactor_t cert_t:file { getattr open read };
+allow cfengine_reactor_t cert_t:lnk_file read;
+
+allow cfengine_reactor_t http_port_t:tcp_socket name_connect;
+allow cfengine_reactor_t net_conf_t:file { getattr open read };
+allow cfengine_reactor_t self:netlink_route_socket { bind create getattr nlmsg_read read write };
+allow cfengine_reactor_t self:tcp_socket { create ioctl read getattr write setattr append connect getopt setopt shutdown name_connect };
+allow cfengine_reactor_t self:udp_socket { create ioctl read getattr write setattr append connect getopt setopt shutdown };
+allow cfengine_reactor_t self:unix_stream_socket connectto;
+
+allow cfengine_reactor_t ssh_exec_t:file map;
+allow cfengine_reactor_t ssh_exec_t:file { execute execute_no_trans getattr open read };
+allow cfengine_reactor_t ssh_home_t:dir { getattr search };
+allow cfengine_reactor_t ssh_port_t:tcp_socket name_connect;
+
+# Allow cf-reactor to run scheduled reports and send them via email
+allow cfengine_reactor_t postfix_etc_t:dir { getattr open read search };
+allow cfengine_reactor_t postfix_etc_t:file { getattr open read };
+allow cfengine_reactor_t postfix_master_t:unix_stream_socket connectto;
+allow cfengine_reactor_t postfix_postdrop_exec_t:file map;
+allow cfengine_reactor_t postfix_postdrop_exec_t:file { execute execute_no_trans open read };
+allow cfengine_reactor_t postfix_public_t:dir search;
+allow cfengine_reactor_t postfix_public_t:sock_file { getattr write };
+allow cfengine_reactor_t postfix_spool_t:dir { add_name remove_name search write };
+allow cfengine_reactor_t postfix_spool_t:file { create getattr open read rename setattr write };
+allow cfengine_reactor_t sendmail_exec_t:file map;
+allow cfengine_reactor_t sendmail_exec_t:file { execute execute_no_trans open read };
+
+
+#============= cfengine_action_script_t ==============
+# A special type and domain for action (notification/alert) scripts executed by
+# PHP. They can do anything, so they need to run in an unconstrained domain. At
+# the same time we don't want our Apache and PHP to do anything so these scripts
+# cannot just run in the http_t domain.
+
+type cfengine_action_script_t;
+typeattribute cfengine_action_script_t domain;
+role system_r types cfengine_action_script_t;
+
+# this is a macro invocation, the file has to be processed with
+# make -f /usr/share/selinux/devel/Makefile
+unconfined_domain(cfengine_action_script_t)
+
+# /opt/cfengine/notification_scripts/* files have the
+# 'cfengine_action_script_exec_t' context which is an entrypoint for the
+# 'cfengine_action_script_t' domain
+type cfengine_action_script_exec_t;
+typeattribute cfengine_action_script_exec_t entry_type;
+typeattribute cfengine_action_script_exec_t exec_type;
+typeattribute cfengine_action_script_exec_t file_type, non_security_file_type, non_auth_file_type;
+role object_r types cfengine_action_script_exec_t;
+
+# cf-apache/httpd manipulates with the action scripts
+allow cfengine_httpd_t cfengine_action_script_exec_t:file { getattr open read };
+
+# cf-reactor runs alerts periodically and these can trigger custom action scripts
+type_transition cfengine_reactor_t cfengine_action_script_exec_t:process cfengine_action_script_t;
+allow cfengine_reactor_t cfengine_action_script_t:process transition;
+allow cfengine_reactor_t cfengine_action_script_exec_t:file { execute execute_no_trans getattr open read };
+allow cfengine_reactor_t cfengine_action_script_exec_t:dir { getattr search };
+allow cfengine_reactor_t cfengine_action_script_t:process siginh;
+
+allow cfengine_action_script_t cfengine_action_script_exec_t:file entrypoint;
+allow cfengine_action_script_t cfengine_action_script_exec_t:file { ioctl read getattr lock map execute open };
+
+#============= cfengine_cfbs_t ==============
+type cfengine_cfbs_t;
+typeattribute cfengine_cfbs_t domain;
+role system_r types cfengine_cfbs_t;
+
+# /var/cfengine/bin/cf-cfbs has the 'cfengine_cfbs_exec_t' context which is an
+# entrypoint for the 'cfengine_cfbs_t' domain
+type cfengine_cfbs_exec_t;
+typeattribute cfengine_cfbs_exec_t entry_type;
+typeattribute cfengine_cfbs_exec_t exec_type;
+typeattribute cfengine_cfbs_exec_t file_type, non_security_file_type, non_auth_file_type;
+role object_r types cfengine_cfbs_exec_t;
+
+allow cfengine_cfbs_t cfengine_cfbs_exec_t:file entrypoint;
+allow cfengine_cfbs_t cfengine_cfbs_exec_t:file { ioctl read getattr lock map execute open };
+
+allow cfengine_cfbs_t cfengine_var_lib_t:dir { add_name getattr create open read search write remove_name setattr };
+allow cfengine_cfbs_t cfengine_var_lib_t:file { create ioctl lock write unlink append setattr link rename execute execute_no_trans map getattr open read };
+allow cfengine_cfbs_t cfengine_var_lib_t:lnk_file { getattr read create unlink };
+
+allow cfengine_cfbs_t cfengine_reactor_t:fifo_file { getattr ioctl read write };
+
+allow cfengine_cfbs_t bin_t:file { map execute };
+
+# cfbs runs some commands in a shell
+allow cfengine_cfbs_t shell_exec_t:file map;
+allow cfengine_cfbs_t shell_exec_t:file { execute execute_no_trans };
+
+allow cfengine_cfbs_t cert_t:dir { getattr open read search };
+allow cfengine_cfbs_t cert_t:file { getattr open read };
+allow cfengine_cfbs_t cert_t:lnk_file read;
+allow cfengine_cfbs_t http_port_t:tcp_socket name_connect;
+allow cfengine_cfbs_t net_conf_t:file { getattr open read };
+allow cfengine_cfbs_t passwd_file_t:file { getattr open read };
+allow cfengine_cfbs_t self:capability dac_override;
+allow cfengine_cfbs_t self:netlink_route_socket { bind create getattr nlmsg_read read write };
+allow cfengine_cfbs_t self:tcp_socket { create ioctl read getattr write setattr append connect getopt setopt shutdown name_connect };
+allow cfengine_cfbs_t self:udp_socket { create ioctl read getattr write setattr append connect getopt setopt shutdown };
+allow cfengine_cfbs_t sssd_public_t:dir search;
+allow cfengine_cfbs_t sssd_public_t:file { map getattr open read };
+allow cfengine_cfbs_t sssd_t:unix_stream_socket connectto;
+allow cfengine_cfbs_t sssd_var_lib_t:dir search;
+allow cfengine_cfbs_t sssd_var_lib_t:sock_file write;
+
+
+#============= special rules for Federated Reporting =============
+# sshd needs access to files in /opt/cfengine
+allow sshd_t cfengine_var_lib_t:file { getattr open read };
+
+
+#============= TO REMOVE ==============
+# Daemons should have proper access to files based on DAC rules (file
+# permissions), not just because they run under root.
+dontaudit cfengine_execd_t self:capability dac_override;
+dontaudit cfengine_serverd_t self:capability { dac_override dac_read_search };
+
+# cf-promises run by the daemons shouldn't check if a function is available in
+# PostgreSQL, the respective returnszero() is in an agent bundle
+dontaudit cfengine_execd_t cfengine_postgres_t:unix_stream_socket connectto;
+dontaudit cfengine_execd_t tmp_t:sock_file write;
+dontaudit cfengine_serverd_t cfengine_postgres_t:unix_stream_socket connectto;
+dontaudit cfengine_serverd_t tmp_t:sock_file write;

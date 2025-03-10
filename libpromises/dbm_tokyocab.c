@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -243,6 +243,12 @@ bool DBPrivClean(DBPriv *db)
     DBPrivCloseCursor(cursor);
 
     return true;
+}
+
+int DBPrivGetDBUsagePercentage(ARG_UNUSED const char *db_path)
+{
+    Log(LOG_LEVEL_WARNING, "Cannot determine usage of a TokyoCabinet database");
+    return -1;
 }
 
 bool DBPrivHasKey(DBPriv *db, const void *key, int key_size)

@@ -30,24 +30,25 @@ AM_LDFLAGS =
 endif
 
 AM_LDFLAGS += $(CORE_LDFLAGS) $(LMDB_LDFLAGS) $(TOKYOCABINET_LDFLAGS) $(QDBM_LDFLAGS) \
-	$(PCRE_LDFLAGS) $(OPENSSL_LDFLAGS) $(SQLITE3_LDFLAGS) $(LIBACL_LDFLAGS) $(LIBYAML_LDFLAGS) $(LIBCURL_LDFLAGS)
+	$(PCRE2_LDFLAGS) $(OPENSSL_LDFLAGS) $(SQLITE3_LDFLAGS) $(LIBACL_LDFLAGS) $(LIBYAML_LDFLAGS) $(LIBCURL_LDFLAGS) $(LIBRSYNC_LDFLAGS)
 
 AM_CPPFLAGS = \
-	-I$(srcdir)/../libntech/libutils -I$(srcdir)/../libcfnet \
+	-I$(srcdir)/../libntech/libutils -I$(srcdir)/../libcfecompat \
+	-I$(srcdir)/../libcfnet \
 	-I$(srcdir)/../libenv \
 	-I$(srcdir)/../cf-check \
 	$(CORE_CPPFLAGS) $(ENTERPRISE_CPPFLAGS) \
 	$(LMDB_CPPFLAGS) $(TOKYOCABINET_CPPFLAGS) $(QDBM_CPPFLAGS) \
-	$(PCRE_CPPFLAGS) $(OPENSSL_CPPFLAGS) $(SQLITE3_CPPFLAGS) $(LIBACL_CPPFLAGS) $(LIBYAML_CPPFLAGS) $(LIBCURL_CPPFLAGS)
+	$(PCRE2_CPPFLAGS) $(OPENSSL_CPPFLAGS) $(SQLITE3_CPPFLAGS) $(LIBACL_CPPFLAGS) $(LIBYAML_CPPFLAGS) $(LIBCURL_CPPFLAGS) $(LIBRSYNC_CPPFLAGS)
 
 AM_CFLAGS = $(CORE_CFLAGS) $(ENTERPRISE_CFLAGS) \
 	$(LMDB_CFLAGS) $(TOKYOCABINET_CFLAGS) $(QDBM_CFLAGS) \
-	$(PCRE_CFLAGS) $(OPENSSL_CFLAGS) $(SQLITE3_CFLAGS) $(LIBACL_CFLAGS) $(LIBYAML_CFLAGS) $(LIBCURL_CFLAGS)
+	$(PCRE2_CFLAGS) $(OPENSSL_CFLAGS) $(SQLITE3_CFLAGS) $(LIBACL_CFLAGS) $(LIBYAML_CFLAGS) $(LIBCURL_CFLAGS) $(LIBRSYNC_CFLAGS)
 
 AM_YFLAGS = -d
 
 LIBS = $(LMDB_LIBS) $(TOKYOCABINET_LIBS) $(QDBM_LIBS) \
-	$(PCRE_LIBS) $(OPENSSL_LIBS) $(SQLITE3_LIBS) $(LIBACL_LIBS) $(LIBYAML_LIBS) $(LIBCURL_LIBS)
+	$(PCRE2_LIBS) $(OPENSSL_LIBS) $(SQLITE3_LIBS) $(LIBACL_LIBS) $(LIBYAML_LIBS) $(LIBCURL_LIBS) $(LIBRSYNC_LIBS)
 
 # The lib providing sd_listen_fds() is not needed in libpromises, it's actually
 # needed in libcfnet. But adding it here is an easy way to make sure it's
@@ -55,7 +56,8 @@ LIBS = $(LMDB_LIBS) $(TOKYOCABINET_LIBS) $(QDBM_LIBS) \
 # require libpromises, we can do this properly.
 LIBS += $(SYSTEMD_SOCKET_LIBS)
 
-libpromises_la_LIBADD = ../libntech/libutils/libutils.la ../libcfnet/libcfnet.la \
+libpromises_la_LIBADD = ../libntech/libutils/libutils.la ../libcfecompat/libcfecompat.la \
+	../libcfnet/libcfnet.la \
 	../libenv/libenv.la $(ENTERPRISE_LDADD)
 
 libpromises_la_SOURCES = \
@@ -216,6 +218,13 @@ endif
 endif
 
 endif # !NT
+
+if !NDEBUG
+if LINUX
+libpromises_la_SOURCES += \
+	dbm_test_api.c dbm_test_api.h
+endif
+endif
 
 
 ########## Sources pre-generated and distributed in the tarball ##########

@@ -43,14 +43,16 @@ stamp-h1
 /cf-serverd/Makefile
 /cf-testd/Makefile
 /cf-upgrade/Makefile
-/contrib/vagrant-ci/centos-7-x64/Makefile
+/contrib/vagrant-ci/centos-9s-x64/Makefile
 /examples/Makefile
 /ext/Makefile
+/libcfecompat/Makefile
 /libcfnet/Makefile
 /libenv/Makefile
 /libpromises/Makefile
 /misc/Makefile
 /misc/selinux/Makefile
+/python/Makefile
 /tests/Makefile
 /tests/acceptance/25_cf-execd/Makefile
 /tests/acceptance/Makefile
@@ -152,7 +154,7 @@ cscope.*
 \#*#
 .dir-locals.el
 /contrib/*.elc
-/contrib/vagrant-ci/centos-7-x64/.vagrant
+/contrib/vagrant-ci/centos-9s-x64/.vagrant
 
 ## Flycheck
 flycheck_*
@@ -187,4 +189,5 @@ __pycache__
 # SELinux policy build artifacts
 misc/selinux/cfengine-enterprise.pp
 misc/selinux/cfengine-enterprise.if
+misc/selinux/cfengine-enterprise.te
 misc/selinux/tmp

@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -460,7 +460,7 @@ bool CompareToFile(
         return false;
     }
 
-    if (!LoadFileAsItemList(&cmplist, file, a->edits))
+    if (!LoadFileAsItemList(&cmplist, file, a->edits, false))
     {
         return false;
     }

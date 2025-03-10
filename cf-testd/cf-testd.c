@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -23,6 +23,7 @@
 */
 
 #include <platform.h>
+#include <getopt.h>
 
 #include <client_code.h>        // cfnet_init
 #include <crypto.h>             // CryptoInitialize
@@ -93,6 +94,13 @@ typedef struct
 /* Command line option parsing                                     */
 /*******************************************************************/
 
+static const Component COMPONENT =
+{
+    .name = "cf-testd",
+    .website = CF_WEBSITE,
+    .copyright = CF_COPYRIGHT
+};
+
 static const struct option OPTIONS[] = {
     {"address", required_argument, 0, 'a'},
     {"debug", no_argument, 0, 'd'},
@@ -144,7 +152,7 @@ void CFTestD_ConfigDestroy(CFTestD_Config *config)
 void CFTestD_Help()
 {
     Writer *w = FileWriter(stdout);
-    WriterWriteHelp(w, "cf-testd", OPTIONS, HINTS, NULL, false, true);
+    WriterWriteHelp(w, &COMPONENT, OPTIONS, HINTS, NULL, false, true);
     FileWriterDetach(w);
 }
 
@@ -773,12 +781,17 @@ int main(int argc, char *argv[])
     CFTestD_Config **thread_configs = (CFTestD_Config**) xcalloc(n_threads, sizeof(CFTestD_Config*));
     for (int i = 0; i < n_threads; i++)
     {
-        thread_configs[i] = (CFTestD_Config*) xmalloc(sizeof(CFTestD_Config));
+        thread_configs[i] = (CFTestD_Config*) xcalloc(1, sizeof(CFTestD_Config));
+        char *thread_num_str;
+        xasprintf(&thread_num_str, "%d", i);
 
         if (config->report_file != NULL && strstr(config->report_file, "%d") != NULL)
         {
-            /* replace the '%d' with the thread number */
-            asprintf(&(thread_configs[i]->report_file), config->report_file, i);
+            /* replace the (first) '%d' with the thread number */
+            size_t report_file_len = strlen(config->report_file) + strlen(thread_num_str) - 2 + 1;
+            thread_configs[i]->report_file = xmalloc(report_file_len);
+            StringReplaceN(thread_configs[i]->report_file, report_file_len,
+                           "%d", thread_num_str, 1);
         }
         else
         {
@@ -787,8 +800,11 @@ int main(int argc, char *argv[])
 
         if (config->key_file != NULL && strstr(config->key_file, "%d") != NULL)
         {
-            /* replace the '%d' with the thread number */
-            asprintf(&(thread_configs[i]->key_file), config->key_file, i);
+            /* replace the (first) '%d' with the thread number */
+            size_t key_file_len = strlen(config->key_file) + strlen(thread_num_str) - 2 + 1;
+            thread_configs[i]->key_file = xmalloc(key_file_len);
+            StringReplaceN(thread_configs[i]->key_file, key_file_len,
+                           "%d", thread_num_str, 1);
         }
         else
         {
@@ -803,6 +819,7 @@ int main(int argc, char *argv[])
         {
             thread_configs[i]->address = IncrementIPaddress(thread_configs[i-1]->address);
         }
+        free(thread_num_str);
     }
 
     CFTestD_ConfigDestroy(config);

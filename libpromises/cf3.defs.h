@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -339,7 +339,7 @@ struct GidList_
 #define CF_NOINT    -678L
 #define CF_UNDEFINED_ITEM (void *)0x1234
 
-#define DEFAULTMODE ((mode_t)0755)
+#define DEFAULTMODE ((mode_t)0700)
 
 #define CF_DONEPASSES  4
 

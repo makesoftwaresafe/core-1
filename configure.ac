@@ -86,6 +86,10 @@ AS_IF([test -n "$RELEASE"],
 
 AC_DEFINE(BUILD_YEAR, esyscmd([date +%Y | tr -d '\n']), "Software build year")
 
+AC_DEFINE(CF_WEBSITE, "https://cfengine.com", "Website. To be used in help screens")
+
+AC_DEFINE(CF_COPYRIGHT, "2023 Northern.tech AS", "Copyright. To be used in help screens")
+
 AC_DEFINE_UNQUOTED(ABS_TOP_SRCDIR,
 "`cd -- "$srcdir"; pwd`",
 [Absolute path of source tree])
@@ -132,10 +136,19 @@ AM_PROG_LEX
 AC_PROG_YACC
 AC_PROG_INSTALL
 AC_PATH_PROG([PERL], [perl])
-AC_CONFIG_LIBOBJ_DIR(libntech/libcompat)
+AC_CONFIG_LIBOBJ_DIR(libcfecompat)
+CFECOMPAT_CPPFLAGS="-I$srcdir/libcfecompat"
 AC_PATH_PROG(GETCONF, getconf, false, $PATH:$prefix/bin:/usr/bin:/usr/local/bin:/sw/bin)
 AM_CONDITIONAL(CROSS_COMPILING, test "x$cross_compiling" = "xyes")
 
+# Check whether `pkg-config' is available
+AC_ARG_VAR([PKG_CONFIG], [path to pkg-config])
+AC_ARG_VAR([PKG_CONFIG_PATH], [directories to add to the pkg-config search path])
+AC_ARG_VAR([PKG_CONFIG_LIBDIR], [path overriding pkg-config's search path])
+
+if test "x$ac_cv_env_PKG_CONFIG_set" != "xset"; then
+    AC_PATH_TOOL([PKG_CONFIG], [pkg-config])
+fi
 
 dnl ######################################################################
 dnl Use pthreads if available
@@ -447,10 +460,10 @@ if test x"$with_openssl" = xno ; then
     AC_MSG_ERROR([This release of CFEngine requires OpenSSL >= 0.9.7])
 fi
 
-if  test -d /usr/local/Cellar/openssl/ && \
+if  test -d /usr/local/Cellar/ && \
     test -d /usr/local/opt/openssl/ && \
     test "x$with_openssl" = "xyes" ; then
-    with_openssl="/usr/local/opt/openssl"
+    with_openssl=$(brew --prefix openssl)
     echo "OS X Homebrew detected"
     echo "Defaulting to: --with-openssl=$with_openssl"
 fi
@@ -491,34 +504,41 @@ CF3_WITH_LIBRARY(openssl, [
     )
 ])
 
-dnl PCRE
+dnl PCRE2
+AC_ARG_WITH([pcre2], [AS_HELP_STRING([--with-pcre2[[=PATH]]], [Specify PCRE2 path])], [], [with_pcre2=yes])
 
-AC_ARG_WITH([pcre], [AS_HELP_STRING([--with-pcre[[=PATH]]], [Specify PCRE path])], [], [with_pcre=yes])
-
-if test "x$with_pcre" = "xno"; then
-   AC_MSG_ERROR([PCRE is required])
+if test "x$with_pcre2" = "xno"; then
+   AC_MSG_ERROR([PCRE2 is required])
 fi
 
-CF3_WITH_LIBRARY(pcre, [
-  AC_CHECK_LIB(pcre, pcre_exec, [], [AC_MSG_ERROR(Cannot find PCRE)])
-  AC_CHECK_HEADERS([pcre.h], [],
-    [AC_CHECK_HEADERS([pcre/pcre.h], [PCRE_CPPFLAGS="-Ipcre"],
-                      AC_MSG_ERROR(Cannot find PCRE))])
-])
+CF3_WITH_LIBRARY(pcre2, [
+  AC_CHECK_LIB(pcre2-8, pcre2_compile_8, [], [AC_MSG_ERROR(Cannot find PCRE2)])
+  AC_CHECK_HEADERS(
+    [pcre2.h],
+    [],
+    AC_MSG_ERROR(Cannot find PCRE2),
+    [#define PCRE2_CODE_UNIT_WIDTH 8]
+  )]
+)
 
-dnl systemd-socket activation
+dnl librsync
 
-AC_ARG_WITH([systemd-socket], [AS_HELP_STRING([--with-systemd-socket[[=PATH]]], [support systemd socket activation])], [], [with_systemd_socket=check])
+AC_ARG_WITH([librsync], [AS_HELP_STRING([--with-librsync[[=PATH]]], [Specify librsync path])], [], [with_librsync=yes])
 
-
-if test "x$with_systemd_socket" != xno
-then
-   CF3_WITH_LIBRARY(systemd_socket, [
-      AC_CHECK_LIB(systemd, sd_listen_fds, [], [if test "x$with_systemd_socket" != xcheck; then AC_MSG_ERROR(Cannot find systemd library); fi])
-      AC_CHECK_LIB(systemd, sd_notify_barrier, [AC_DEFINE([HAVE_SD_NOTIFY_BARRIER],[1],[sd_notify_barrier on recent systemd])])
-      AC_CHECK_HEADERS(systemd/sd-daemon.h, [], [if test "x$with_systemd_socket" != xcheck; then AC_MSG_ERROR(Cannot find systemd headers); fi])
-   ])
+if test "x$with_librsync" = "xno"; then
+   AC_MSG_ERROR([librsync is required])
 fi
+
+CF3_WITH_LIBRARY(librsync, [
+    AC_CHECK_HEADERS([librsync.h], [], AC_MSG_ERROR(Cannot find librsync))
+    AC_CHECK_LIB(rsync, rs_job_iter, [], [AC_MSG_ERROR(Cannot find librsync)])
+  ]
+)
+
+dnl defined for libntech
+
+AC_DEFINE(WITH_PCRE2, 1, [Define if PCRE2 is being used])
+
 
 dnl libvirt
 
@@ -611,42 +631,59 @@ AC_ARG_WITH([libxml2],
     [],
     [with_libxml2=check])
 
-if test "x$with_libxml2" != xno
-then
-    if test "x$with_libxml2" != xyes &&
-       test "x$with_libxml2" != xcheck
-    then
-        XML2_CONFIG=$with_libxml2/bin/xml2-config
-    else
-        XML2_CONFIG=xml2-config
+have_libxml2="no"
+
+if test "x$with_libxml2" != "xno"; then
+    if test -n "$PKG_CONFIG"; then
+        AC_MSG_CHECKING([for libxml2 via pkg-config])
+        if `$PKG_CONFIG --exists libxml-2.0`; then
+            LIBXML2_CFLAGS=`$PKG_CONFIG --cflags libxml-2.0`
+            LIBXML2_CPPFLAGS="$LIBXML2_CFLAGS"
+            LIBXML2_LIBS=`$PKG_CONFIG --libs libxml-2.0`
+            LIBXML2_VERSION=`$PKG_CONFIG --modversion libxml-2.0`
+            AC_MSG_RESULT([found version $LIBXML2_VERSION])
+            have_libxml2="yes"
+        else
+            AC_MSG_RESULT([not found])
+        fi
     fi
 
-    # xml2-config is only for native builds
-    if test "x$cross_compiling" = "xno" && test x`which $XML2_CONFIG` != x
-    then
-        xml2_include_dir=`$XML2_CONFIG --cflags`
-        if test -n "$xml2_include_dir"
+    if test "x$have_libxml2" = "xno"; then
+        if test "x$with_libxml2" != "xyes" &&
+           test "x$with_libxml2" != "xcheck" &&
+           test -x "$with_libxml2/bin/xml2-config"
         then
-            LIBXML2_CPPFLAGS="$xml2_include_dir"
+            XML2_CONFIG=$with_libxml2/bin/xml2-config
+        else
+            AC_PATH_PROG([XML2_CONFIG], [xml2-config])
         fi
-    else                # xml2-config not found
-        # if a path, e.g. /var/cfengine was given, then we
-        # must take into account that libxml2 includes are in
-        # /var/cfengine/include/libxml2
-        LIBXML2_CPPFLAGS=-I$with_libxml2/include/libxml2
+
+        # xml2-config is only for native builds
+        if test "x$cross_compiling" = "xno" && test -n "$XML2_CONFIG"; then
+            xml2_include_dir=`$XML2_CONFIG --cflags`
+            if test -n "$xml2_include_dir"; then
+                LIBXML2_CPPFLAGS="$xml2_include_dir"
+            fi
+        else # xml2-config not found
+            # if a path, e.g. /var/cfengine was given, then we
+            # must take into account that libxml2 includes are in
+            # /var/cfengine/include/libxml2
+            LIBXML2_CPPFLAGS=-I$with_libxml2/include/libxml2
+        fi
     fi
 
     CF3_WITH_LIBRARY(libxml2,
         [AC_CHECK_LIB(xml2, xmlFirstElementChild,
-            [],
-            [if test "x$with_libxml2" != xcheck; then
-                AC_MSG_ERROR(Cannotfind libxml2); fi]
+        [],
+        [if test "x$with_libxml2" != xcheck; then
+            AC_MSG_ERROR(Cannot find libxml2); fi]
         )
         AC_CHECK_HEADERS([libxml/xmlwriter.h], [break],
             [if test "x$with_libxml2" != xcheck; then
                 AC_MSG_ERROR(Cannot find libxml2); fi]
         )]
     )
+    
 fi
 
 AM_CONDITIONAL([HAVE_LIBXML2],
@@ -699,6 +736,8 @@ AC_CHECK_HEADERS(net/if_arp.h, , , [AC_INCLUDES_DEFAULT
 #include <sys/socket.h>
 ])
 
+AC_CHECK_HEADERS(getopt.h, [system_getopt_h=1], [system_getopt_h=0])
+AM_CONDITIONAL([NO_SYSTEM_GETOPT_H], [test x$system_getopt_h = x0])
 AC_CHECK_HEADERS(utime.h)
 AC_CHECK_HEADERS(time.h)
 AC_CHECK_HEADERS(sys/time.h)
@@ -763,7 +802,6 @@ dnl ######################################################################
 
 AC_C_CONST
 
-AC_FUNC_FSEEKO
 AC_SYS_LARGEFILE
 AC_TYPE_OFF_T
 
@@ -793,88 +831,60 @@ dnl Check for special functions
 dnl ######################################################################
 
 AC_CHECK_DECLS(clock_gettime, [], [], [[#include <time.h>]])
-AC_REPLACE_FUNCS(clock_gettime)
 
 AC_CHECK_DECLS(unsetenv)
-AC_REPLACE_FUNCS(unsetenv)
 
 AC_CHECK_DECLS(strnlen)
-AC_REPLACE_FUNCS(strnlen)
-
-cf3_FUNC_STRNDUP
 
 AC_CHECK_DECLS(seteuid)
-AC_REPLACE_FUNCS(seteuid)
 
 AC_CHECK_DECLS(setlinebuf)
-AC_REPLACE_FUNCS(setlinebuf)
 
 AC_CHECK_DECLS(strlcat)
-AC_REPLACE_FUNCS(strlcat)
 
 AC_CHECK_DECLS(strlcpy)
-AC_REPLACE_FUNCS(strlcpy)
 
 AC_CHECK_DECLS(realpath)
 
 AC_CHECK_DECLS(strdup)
-AC_REPLACE_FUNCS(strdup)
 
 AC_CHECK_DECLS(memrchr)
-AC_REPLACE_FUNCS(memrchr)
 
 AC_CHECK_DECLS(round, [], [], [[#include <math.h>]])
-AC_REPLACE_FUNCS(round)
 
 AC_CHECK_DECLS(nanosleep)
-AC_REPLACE_FUNCS(nanosleep)
 
 AC_CHECK_DECLS(memdup)
-AC_REPLACE_FUNCS(memdup)
 
 AC_CHECK_DECLS(memmem)
-AC_REPLACE_FUNCS(memmem)
 
 AC_CHECK_DECLS(srand48)
-AC_REPLACE_FUNCS(srand48)
 
 AC_CHECK_DECLS(drand48)
-AC_REPLACE_FUNCS(drand48)
 
 AC_CHECK_DECLS(strerror)
-AC_REPLACE_FUNCS(strerror)
 
 AC_CHECK_DECLS(strstr)
-AC_REPLACE_FUNCS(strstr)
 
 AC_CHECK_DECLS(strcasestr)
-AC_REPLACE_FUNCS(strcasestr)
 
 AC_CHECK_DECLS(strcasecmp)
-AC_REPLACE_FUNCS(strcasecmp)
 
 AC_CHECK_DECLS(strncasecmp)
-AC_REPLACE_FUNCS(strncasecmp)
 
 AC_CHECK_DECLS(strsep)
-AC_REPLACE_FUNCS(strsep)
 
 AC_CHECK_DECLS(strsignal)
-AC_REPLACE_FUNCS(strsignal)
 
 AC_CHECK_DECLS(gmtime_r, [], [], [[#include <time.h>]])
-AC_REPLACE_FUNCS(gmtime_r)
 
 AC_CHECK_DECLS(getline, [], [], [#define _GNU_SOURCE 1
 AC_INCLUDES_DEFAULT])
-AC_REPLACE_FUNCS(getline)
 
 AC_CHECK_DECLS(strchrnul, [], [], [#define _GNU_SOURCE 1
 AC_INCLUDES_DEFAULT])
-AC_REPLACE_FUNCS(strchrnul)
 
 AC_CHECK_DECLS(localtime_r, [], [], [[#include <time.h>]])
-AC_REPLACE_FUNCS(localtime_r)
 
 AC_CHECK_DECLS(fgetgrent, [], [], [[#include <grp.h>]])
 
@@ -898,7 +908,6 @@ AC_CHECK_DECLS(le32toh, [], [], [[#include <endian.h>]])
 
 AC_CHECK_DECLS(closefrom, [], [], [[#include <unistd.h>
                                     #include <stdlib.h>]])
-AC_REPLACE_FUNCS(closefrom)
 
 AC_CHECK_HEADERS([sys/pstat.h])
 AC_CHECK_FUNCS(pstat_getfile2)
@@ -1040,7 +1049,6 @@ CF3_CHECK_PROPER_FUNC([ctime],
   [],
   [[#error ctime(3) may produce different results on different OSes. Let's have our POSIX-compliant implementation all the time]],
   [#define ctime rpl_ctime])
-CF3_REPLACE_PROPER_FUNC([ctime])
 
 dnl Check whether mkdir accepts two parameters
 CF3_CHECK_PROPER_FUNC([mkdir],
@@ -1072,13 +1080,10 @@ CF3_CHECK_PROPER_FUNC([rename],
   [#define rename rpl_rename])
 
 AC_CHECK_DECLS(mkdtemp)
-AC_REPLACE_FUNCS(mkdtemp)
 
 AC_CHECK_DECLS(strrstr)
-AC_REPLACE_FUNCS(strrstr)
 
 AC_CHECK_DECLS(stpncpy)
-AC_REPLACE_FUNCS(stpncpy)
 
 AC_CHECK_FUNCS(seteuid setegid setreuid setregid)
 AC_CHECK_FUNCS(uname gethostname chflags)
@@ -1129,9 +1134,7 @@ AC_CHECK_FUNCS(dirfd, [], [
   [AC_MSG_RESULT(yes)
   DIRFD_MACRO_FOUND=1],
   [AC_MSG_RESULT(no)])
-  if test x$DIRFD_MACRO_FOUND = x; then
-    AC_LIBOBJ([dirfd])
-  fi])
+  ])
 
 AC_CHECK_FUNCS(jail_get)
 
@@ -1157,7 +1160,7 @@ AC_CHECK_TYPES(struct sockaddr_storage, [], [], [[
     #include <netdb.h>
 #endif]])
 
-AC_CHECK_DECLS(getaddrinfo, [], [AC_LIBOBJ(getaddrinfo)], [[
+AC_CHECK_DECLS(getaddrinfo, [], [], [[
 #if HAVE_WINSOCK2_H
     #include <winsock2.h>
 #endif
@@ -1170,7 +1173,6 @@ AC_CHECK_DECLS(getaddrinfo, [], [AC_LIBOBJ(getaddrinfo)], [[
 ]])
 
 AC_CHECK_DECLS([[inet_ntop], [inet_pton]], [], [], [[#include <arpa/inet.h>]])
-AC_REPLACE_FUNCS(inet_ntop inet_pton)
 
 AC_CHECK_FUNCS(getifaddrs)
 
@@ -1179,10 +1181,8 @@ AC_CHECK_FUNCS(getprocs64)
 AC_CHECK_FUNC(lchown, AC_DEFINE(HAVE_LCHOWN, 1, [Whether to use lchown(3) to change ownerships]))
 
 AC_CHECK_DECLS(pthread_attr_setstacksize, [], [], [[#include <pthread.h>]])
-AC_REPLACE_FUNCS(pthread_attr_setstacksize)
 
 AC_CHECK_DECLS(pthread_sigmask, [], [], [[#include <signal.h>]])
-AC_REPLACE_FUNCS(pthread_sigmask)
 
 AC_CHECK_DECLS(sched_yield, [], [], [[#include <sched.h>]])
 AC_CHECK_FUNCS(sched_yield)
@@ -1197,10 +1197,8 @@ AC_CHECK_DECLS([fchmodat], [], [], [[#define _GNU_SOURCE 1
                                     #include <sys/stat.h>]])
 AC_CHECK_DECLS([readlinkat], [], [], [[#define _GNU_SOURCE 1
                                        #include <unistd.h>]])
-AC_REPLACE_FUNCS(openat fstatat fchownat fchmodat readlinkat)
 
 AC_CHECK_DECLS([log2], [], [], [[#include <math.h>]])
-AC_REPLACE_FUNCS(log2)
 
 dnl ######################################################################
 dnl Required by cf-upgrade. It cannot be implemented in libcompat because
@@ -1227,6 +1225,9 @@ AC_CHECK_FUNCS(sleep)
 AC_CHECK_DECLS(socketpair, [], [], [[#include <sys/socket.h>]])
 AC_CHECK_DECLS(fsync)
 AC_CHECK_DECLS(glob, [], [], [[#include <glob.h>]])
+AC_CHECK_DECLS(gettid, [], [], [[
+#define _GNU_SOURCE
+#include <unistd.h>]])
 
 dnl ######################################################################
 dnl Check for sa_len in struct sockaddr
@@ -1266,6 +1267,25 @@ dnl SystemV way to get uptime, highly portable
 AC_CHECK_HEADERS(utmp.h)
 dnl POSIX way to get uptime
 AC_CHECK_HEADERS(utmpx.h)
+
+
+dnl ######################################################################
+dnl Fancy new Linux syscalls for file/data copying (config for libntech)
+dnl ######################################################################
+AC_CHECK_HEADERS([linux/fs.h])
+AC_CHECK_DECLS([FICLONE], [], [], [#include <linux/fs.h>])
+AC_CHECK_DECLS([SEEK_DATA], [], [], [
+#define _GNU_SOURCE
+#include <unistd.h>
+])
+AC_CHECK_DECLS([FALLOC_FL_PUNCH_HOLE], [], [], [
+#define _GNU_SOURCE
+#include <fcntl.h>
+])
+AC_CHECK_HEADERS([sys/sendfile.h])
+AC_CHECK_FUNCS([sendfile])
+AC_CHECK_FUNCS([copy_file_range])
+
 
 dnl #######################################################################
 dnl Newer BSD systems don't have a compatible rtentry - use ortentry
@@ -1311,10 +1331,10 @@ dnl ######################################################################
 dnl Collect all the options
 dnl ######################################################################
 
-CORE_CPPFLAGS="$LMDB_CPPFLAGS $TOKYOCABINET_CPPFLAGS $QDBM_CPPFLAGS $PCRE_CPPFLAGS $OPENSSL_CPPFLAGS $SQLITE3_CPPFLAGS $LIBACL_CPPFLAGS $LIBCURL_CPPFLAGS $LIBYAML_CPPFLAGS $POSTGRESQL_CPPFLAGS $MYSQL_CPPFLAGS $LIBXML2_CPPFLAGS $CPPFLAGS"
-CORE_CFLAGS="$LMDB_CFLAGS $TOKYOCABINET_CFLAGS $QDBM_CFLAGS $PCRE_CFLAGS $OPENSSL_CFLAGS $SQLITE3_CFLAGS $LIBACL_CFLAGS $LIBCURL_CFLAGS $LIBYAML_CFLAGS $POSTGRESQL_CFLAGS $MYSQL_CFLAGS $LIBXML2_CFLAGS $CFLAGS"
-CORE_LDFLAGS="$LMDB_LDFLAGS $TOKYOCABINET_LDFLAGS $QDBM_LDFLAGS $PCRE_LDFLAGS $OPENSSL_LDFLAGS $SQLITE3_LDFLAGS $LIBACL_LDFLAGS $LIBCURL_LDFLAGS $LIBYAML_LDFLAGS $POSTGRESQL_LDFLAGS $MYSQL_LDFLAGS $LIBXML2_LDFLAGS $LDFLAGS"
-CORE_LIBS="$LMDB_LIBS $TOKYOCABINET_LIBS $QDBM_LIBS $PCRE_LIBS $OPENSSL_LIBS $SQLITE3_LIBS $LIBACL_LIBS $LIBCURL_LIBS $LIBYAML_LIBS $POSTGRESQL_LIBS $MYSQL_LIBS $LIBXML2_LIBS $LIBS"
+CORE_CPPFLAGS="$LMDB_CPPFLAGS $TOKYOCABINET_CPPFLAGS $QDBM_CPPFLAGS $PCRE2_CPPFLAGS $OPENSSL_CPPFLAGS $SQLITE3_CPPFLAGS $LIBACL_CPPFLAGS $LIBCURL_CPPFLAGS $LIBRSYNC_CPPFLAGS $LIBYAML_CPPFLAGS $POSTGRESQL_CPPFLAGS $MYSQL_CPPFLAGS $LIBXML2_CPPFLAGS $CPPFLAGS $CFECOMPAT_CPPFLAGS"
+CORE_CFLAGS="$LMDB_CFLAGS $TOKYOCABINET_CFLAGS $QDBM_CFLAGS $PCRE2_CFLAGS $OPENSSL_CFLAGS $SQLITE3_CFLAGS $LIBACL_CFLAGS $LIBCURL_CFLAGS $LIBRSYNC_CFLAGS $LIBYAML_CFLAGS $POSTGRESQL_CFLAGS $MYSQL_CFLAGS $LIBXML2_CFLAGS $CFLAGS"
+CORE_LDFLAGS="$LMDB_LDFLAGS $TOKYOCABINET_LDFLAGS $QDBM_LDFLAGS $PCRE2_LDFLAGS $OPENSSL_LDFLAGS $SQLITE3_LDFLAGS $LIBACL_LDFLAGS $LIBCURL_LDFLAGS $LIBRSYNC_LDFLAGS $LIBYAML_LDFLAGS $POSTGRESQL_LDFLAGS $MYSQL_LDFLAGS $LIBXML2_LDFLAGS $LDFLAGS"
+CORE_LIBS="$LMDB_LIBS $TOKYOCABINET_LIBS $QDBM_LIBS $PCRE2_LIBS $OPENSSL_LIBS $SQLITE3_LIBS $LIBACL_LIBS $LIBCURL_LIBS $LIBRSYNC_LIBS $LIBYAML_LIBS $POSTGRESQL_LIBS $MYSQL_LIBS $LIBXML2_LIBS $LIBS"
 
 dnl ######################################################################
 dnl Make them available to subprojects.
@@ -1576,13 +1596,13 @@ AC_ARG_WITH(systemd-service, AS_HELP_STRING([--with-systemd-service=PATH],
 AS_IF([test "x$SYSTEMD_SERVICE_PATH" = "x"], [], [
     AC_SUBST([SYSTEMD_SERVICE_PATH])
     AC_CONFIG_FILES([misc/systemd/cfengine3.service])
+    AC_CONFIG_FILES([misc/systemd/cf-php-fpm.service])
     AC_CONFIG_FILES([misc/systemd/cf-apache.service])
     AC_CONFIG_FILES([misc/systemd/cf-execd.service])
     AC_CONFIG_FILES([misc/systemd/cf-hub.service])
     AC_CONFIG_FILES([misc/systemd/cf-reactor.service])
     AC_CONFIG_FILES([misc/systemd/cf-monitord.service])
     AC_CONFIG_FILES([misc/systemd/cf-postgres.service])
-    AC_CONFIG_FILES([misc/systemd/cf-runalerts.service])
     AC_CONFIG_FILES([misc/systemd/cf-serverd.service])
 ])
 
@@ -1614,6 +1634,22 @@ else
 fi
 AC_SUBST([OS_ENVIRONMENT_PATH])
 
+dnl systemd-socket activation
+
+AC_ARG_WITH([systemd-socket], [AS_HELP_STRING([--with-systemd-socket[[=PATH]]], [support systemd socket activation])], [], [with_systemd_socket=check])
+
+dnl ########################################################################
+dnl systemd socket feature, only available if systemd init scripts requested
+dnl ########################################################################
+if test "x$with_systemd_service" != xno && test "x$with_systemd_socket" != xno
+then
+   CF3_WITH_LIBRARY(systemd_socket, [
+      AC_CHECK_LIB(systemd, sd_listen_fds, [], [if test "x$with_systemd_socket" != xcheck; then AC_MSG_ERROR(Cannot find systemd library); fi])
+      AC_CHECK_LIB(systemd, sd_notify_barrier, [AC_DEFINE([HAVE_SD_NOTIFY_BARRIER],[1],[sd_notify_barrier on recent systemd])])
+      AC_CHECK_HEADERS(systemd/sd-daemon.h, [], [if test "x$with_systemd_socket" != xcheck; then AC_MSG_ERROR(Cannot find systemd headers); fi])
+   ])
+fi
+
 dnl #####################################################################
 dnl SELinux policy build and installation
 dnl #####################################################################
@@ -1623,6 +1659,13 @@ AC_ARG_WITH(selinux-policy,
             [], [with_selinux_policy=no])
 AM_CONDITIONAL([WITH_SELINUX], [test "x$with_selinux_policy" != "xno"])
 
+if test "x$with_selinux_policy" != "xno"; then
+   platform_id=$(sed -r -e '/PLATFORM_ID/!d;s/PLATFORM_ID="platform:(@<:@^"@:>@+)"/\1/' < /etc/os-release)
+   if test -f ${srcdir}/misc/selinux/cfengine-enterprise.te.$platform_id; then
+     PLATFORM_SELINUX_POLICIES=cfengine-enterprise.te.$platform_id
+     AC_SUBST(PLATFORM_SELINUX_POLICIES)
+   fi
+fi
 
 dnl #####################################################################
 dnl Hostname and Version stuff
@@ -1729,7 +1772,7 @@ AC_MSG_RESULT([> Required libraries])
 
 AC_MSG_RESULT([-> OpenSSL: $OPENSSL_PATH])
 
-AC_MSG_RESULT([-> PCRE: $PCRE_PATH])
+AC_MSG_RESULT([-> PCRE2: $PCRE2_PATH])
 
 if test $WITH_TOKYO = 1; then
   AC_MSG_RESULT([-> DB: Tokyo Cabinet: $TOKYOCABINET_PATH])
@@ -1819,6 +1862,7 @@ fi
 
 if test "x$with_selinux_policy" != "xno"; then
   AC_MSG_RESULT([-> SELinux policy: enabled])
+  AC_MSG_RESULT([-> SELinux platform policies: $PLATFORM_SELINUX_POLICIES])
 else
   AC_MSG_RESULT([-> SELinux policy: disabled])
 fi
@@ -1844,6 +1888,7 @@ AC_CONFIG_FILES([Makefile
     libcfnet/Makefile
     libenv/Makefile
     libpromises/Makefile
+    libcfecompat/Makefile
     cf-agent/Makefile
     cf-check/Makefile
     cf-promises/Makefile
@@ -1857,9 +1902,10 @@ AC_CONFIG_FILES([Makefile
     cf-net/Makefile
     cf-secret/Makefile
     config.post.h
-    contrib/vagrant-ci/centos-7-x64/Makefile
+    contrib/vagrant-ci/centos-9s-x64/Makefile
     misc/Makefile
     misc/selinux/Makefile
+    python/Makefile
     ext/Makefile
     examples/Makefile
     tests/Makefile

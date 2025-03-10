@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -21,6 +21,9 @@
   (COSL) may apply to this file if you as a licensee so wish it. See
   included file COSL.txt.
 */
+
+#include <platform.h>
+#include <getopt.h>
 
 #include <cf-serverd-functions.h>
 #include <cf-serverd-enterprise-stubs.h>
@@ -77,6 +80,13 @@ static const char *const CF_SERVERD_MANPAGE_LONG_DESCRIPTION =
         "cf-serverd instance to request updated policy code, but may also request additional files for download. "
         "cf-serverd employs role based access control (defined in policy code) to authorize requests. "
         "Note: this daemon reloads it's config when the SIGHUP signal is received.";
+
+static const Component COMPONENT =
+{
+    .name = "cf-serverd",
+    .website = CF_WEBSITE,
+    .copyright = CF_COPYRIGHT
+};
 
 static const struct option OPTIONS[] =
 {
@@ -249,7 +259,7 @@ GenericAgentConfig *CheckOpts(int argc, char **argv)
         case 'h':
             {
                 Writer *w = FileWriter(stdout);
-                WriterWriteHelp(w, "cf-serverd", OPTIONS, HINTS, NULL, false, true);
+                WriterWriteHelp(w, &COMPONENT, OPTIONS, HINTS, NULL, false, true);
                 FileWriterDetach(w);
             }
             DoCleanupAndExit(EXIT_SUCCESS);
@@ -320,7 +330,7 @@ GenericAgentConfig *CheckOpts(int argc, char **argv)
         default:
             {
                 Writer *w = FileWriter(stdout);
-                WriterWriteHelp(w, "cf-serverd", OPTIONS, HINTS, NULL, false, true);
+                WriterWriteHelp(w, &COMPONENT, OPTIONS, HINTS, NULL, false, true);
                 FileWriterDetach(w);
             }
             DoCleanupAndExit(EXIT_FAILURE);
@@ -487,8 +497,15 @@ static void CheckFileChanges(EvalContext *ctx, Policy **policy, GenericAgentConf
             /* Reload HA related configuration */
             ReloadHAConfig();
 
-            KeepPromises(ctx, *policy, config);
+            bool unresolved_constraints;
+            KeepPromises(ctx, *policy, config, &unresolved_constraints);
             Summarize();
+            if (unresolved_constraints)
+            {
+                Log(LOG_LEVEL_WARNING,
+                    "Unresolved variables found in cf-serverd policy, scheduling policy reload");
+                RequestReloadConfig();
+            }
         }
         else
         {

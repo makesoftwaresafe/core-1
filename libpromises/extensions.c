@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -22,7 +22,12 @@
   included file COSL.txt.
 */
 
+#include <platform.h>
 #include <enterprise_extension.h>
+
+#include <stdio.h>						/* sscanf() */
+#include <stdlib.h>						/* getenv() */
+#include <string.h>						/* strcmp() */
 
 #include <known_dirs.h>
 #include <misc_lib.h>

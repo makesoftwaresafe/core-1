@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -21,6 +21,9 @@
   (COSL) may apply to this file if you as a licensee so wish it. See
   included file COSL.txt.
 */
+
+#include <platform.h>
+#include <getopt.h>
 
 #include <cf-execd.h>
 
@@ -110,6 +113,13 @@ static const char *const CF_EXECD_MANPAGE_LONG_DESCRIPTION =
     "and may be configured to email the output to a specified address. It may also be configured to splay (randomize) the "
     "execution schedule to prevent synchronized cf-agent runs across a network. "
     "Note: this daemon reloads it's config when the SIGHUP signal is received.";
+
+static const Component COMPONENT =
+{
+    .name = "cf-execd",
+    .website = CF_WEBSITE,
+    .copyright = CF_COPYRIGHT
+};
 
 static const struct option OPTIONS[] =
 {
@@ -327,7 +337,7 @@ static GenericAgentConfig *CheckOpts(int argc, char **argv)
         case 'h':
         {
             Writer *w = FileWriter(stdout);
-            WriterWriteHelp(w, "cf-execd", OPTIONS, HINTS, NULL, false, true);
+            WriterWriteHelp(w, &COMPONENT, OPTIONS, HINTS, NULL, false, true);
             FileWriterDetach(w);
         }
         DoCleanupAndExit(EXIT_SUCCESS);
@@ -400,7 +410,7 @@ static GenericAgentConfig *CheckOpts(int argc, char **argv)
         default:
         {
             Writer *w = FileWriter(stdout);
-            WriterWriteHelp(w, "cf-execd", OPTIONS, HINTS, NULL, false, true);
+            WriterWriteHelp(w, &COMPONENT, OPTIONS, HINTS, NULL, false, true);
             FileWriterDetach(w);
         }
         DoCleanupAndExit(EXIT_FAILURE);
@@ -422,6 +432,23 @@ static GenericAgentConfig *CheckOpts(int argc, char **argv)
 void ThisAgentInit(void)
 {
     umask(077);
+}
+
+// Return 2 to 62 seconds depending on how much time is left until the next
+// minute starts. Since cf-execd wakes up "every minute" to evaluate its
+// schedule, we want to do this at the start of the minute, to avoid
+// accidentally skipping any runs if things are slow.
+//
+// Why +2? Why not 0 to 60? Not a very good reason, but:
+// Sleep at least 2 seconds to avoid 2 agent runs very close together
+// Target waking up at :02 seconds, to reduce the chances of waking
+// up at :59 in the previous minute, and unintentionally having 2
+// agent runs in the same minute
+static inline time_t GetPulseTime()
+{
+    const time_t current_second = (time(NULL) % CFPULSETIME);
+    const time_t remaining_seconds = CFPULSETIME - current_second;
+    return remaining_seconds + 2;
 }
 
 /*****************************************************************************/
@@ -524,6 +551,7 @@ static bool HandleRequestsOrSleep(time_t seconds, const char *reason,
     return false;
 }
 
+// Non-windows version of main loop:
 static void CFExecdMainLoop(EvalContext *ctx, Policy **policy, GenericAgentConfig *config,
                             ExecdConfig **execd_config, ExecConfig **exec_config,
                             int runagent_socket)
@@ -554,7 +582,7 @@ static void CFExecdMainLoop(EvalContext *ctx, Policy **policy, GenericAgentConfi
             }
         }
         /* 1 Minute resolution is enough */
-        terminate = HandleRequestsOrSleep(CFPULSETIME, "pulse time", runagent_socket,
+        terminate = HandleRequestsOrSleep(GetPulseTime(), "pulse time", runagent_socket,
                                           (*execd_config)->local_run_command);
         if (terminate)
         {
@@ -621,19 +649,7 @@ static int SetupRunagentSocket(const ExecdConfig *execd_config)
     if (GetRunagentSocketInfo(&sock_info))
     {
         sock_info.sun_family = AF_LOCAL;
-
-        bool created;
-        MakeParentDirectory(sock_info.sun_path, true, &created);
-
-        /* Make sure the permissions are correct if the directory was created
-         * (note: this code doesn't run on Windows). */
-        if (created)
-        {
-            char *last_slash = strrchr(sock_info.sun_path, '/');
-            *last_slash = '\0';
-            chmod(sock_info.sun_path, (mode_t) 0750);
-            *last_slash = '/';
-        }
+        MakeParentDirectoryPerms(sock_info.sun_path, true, NULL, (mode_t) 0700);
 
         /* Remove potential left-overs from old processes. */
         unlink(sock_info.sun_path);
@@ -657,6 +673,7 @@ static int SetupRunagentSocket(const ExecdConfig *execd_config)
         }
         else
         {
+            safe_chmod(sock_info.sun_path, (mode_t) 0600);
             ret = listen(runagent_socket, CF_EXECD_RUNAGENT_SOCKET_LISTEN_QUEUE);
             assert(ret == 0);
             if (ret == -1)
@@ -700,6 +717,7 @@ static inline unsigned int MaybeSleepLog(LogLevel level, const char *msg_format,
     return sleep(seconds);
 }
 
+// Windows version of main loop:
 static void CFExecdMainLoop(EvalContext *ctx, Policy **policy, GenericAgentConfig *config,
                             ExecdConfig **execd_config, ExecConfig **exec_config,
                             ARG_UNUSED int runagent_socket)
@@ -725,8 +743,8 @@ static void CFExecdMainLoop(EvalContext *ctx, Policy **policy, GenericAgentConfi
                 LocalExec(*exec_config);
             }
         }
-        /* 1 Minute resolution is enough */
-        MaybeSleepLog(LOG_LEVEL_VERBOSE, "Sleeping for pulse time %u seconds...", CFPULSETIME);
+        // This is not just a log message, it maybe sleeps and maybe logs something:
+        MaybeSleepLog(LOG_LEVEL_VERBOSE, "Sleeping for pulse time %u seconds...", GetPulseTime());
     }
 }
 #endif  /* ! __MINGW32__ */

@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -105,8 +105,8 @@ static void ManifestStatInfo(const struct stat *st)
 #define MAX_TIMESTAMP_SIZE (sizeof("2020-10-05 12:56:18 +0200"))
     char buf[MAX_TIMESTAMP_SIZE] = {0};
 
-    size_t ret = strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S %z",
-                          localtime((time_t*) &(st->st_atime)));
+    NDEBUG_UNUSED size_t ret = strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S %z",
+                                        localtime((time_t*) &(st->st_atime)));
     assert((ret > 0) && (ret < MAX_TIMESTAMP_SIZE));
     printf("Access: %s\n", buf);
 
@@ -360,7 +360,7 @@ bool ManifestRename(const char *orig_name, const char *new_name)
 static bool RunDiff(const char *path1, const char *path2)
 {
     char diff_path[PATH_MAX];
-    strncpy(diff_path, GetBinDir(), sizeof(diff_path));
+    strncpy(diff_path, GetBinDir(), sizeof(diff_path) - 1);
     JoinPaths(diff_path, sizeof(diff_path), "diff");
 
     /* We use the '--label' option to override the paths in the output, for example:

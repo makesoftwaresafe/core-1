@@ -26,10 +26,11 @@ noinst_LTLIBRARIES = libcf-promises.la
 AM_CPPFLAGS = \
 	-I$(srcdir)/../libntech/libutils \
 	-I$(srcdir)/../libpromises \
+	-I$(srcdir)/../libcfecompat \
 	-I$(srcdir)/../libcfnet \
 	@CPPFLAGS@ \
 	$(OPENSSL_CPPFLAGS) \
-	$(PCRE_CPPFLAGS) \
+	$(PCRE2_CPPFLAGS) \
 	$(ENTERPRISE_CPPFLAGS)
 
 AM_CFLAGS = @CFLAGS@ \

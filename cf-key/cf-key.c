@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -21,6 +21,9 @@
   (COSL) may apply to this file if you as a licensee so wish it. See
   included file COSL.txt.
 */
+
+#include <platform.h>
+#include <getopt.h>
 
 #include <generic_agent.h>
 
@@ -67,6 +70,13 @@ static const char *const CF_KEY_SHORT_DESCRIPTION =
 
 static const char *const CF_KEY_MANPAGE_LONG_DESCRIPTION =
     "The CFEngine key generator makes key pairs for remote authentication.\n";
+
+static const Component COMPONENT =
+{
+    .name = "cf-key",
+    .website = CF_WEBSITE,
+    .copyright = CF_COPYRIGHT
+};
 
 #define TIMESTAMP_VAL 1234 // Anything outside ASCII range.
 static const struct option OPTIONS[] =
@@ -162,10 +172,10 @@ int main(int argc, char *argv[])
 
     if (print_digest_arg)
     {
-        GenericAgentFinalize(ctx, config);
-        CallCleanupFunctions();
         int rc = PrintDigest(print_digest_arg);
         free(print_digest_arg);
+        GenericAgentFinalize(ctx, config);
+        CallCleanupFunctions();
         return rc;
     }
 
@@ -264,7 +274,7 @@ int main(int argc, char *argv[])
 static void PrintHelp()
 {
     Writer *w = FileWriter(stdout);
-    WriterWriteHelp(w, "cf-key", OPTIONS, HINTS, NULL, false, false);
+    WriterWriteHelp(w, &COMPONENT, OPTIONS, HINTS, NULL, false, false);
     FileWriterDetach(w);
 }
 

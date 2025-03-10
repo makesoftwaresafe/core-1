@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -47,8 +47,8 @@ AgentConnection *ServerConnection(const char *server, const char *port, const Rl
 void DisconnectServer(AgentConnection *conn);
 
 bool CompareHashNet(const char *file1, const char *file2, bool encrypt, AgentConnection *conn);
-bool CopyRegularFileNet(const char *source, const char *dest, off_t size,
-                        bool encrypt, AgentConnection *conn);
+bool CopyRegularFileNet(const char *source, const char *basis, const char *dest, off_t size,
+                        bool encrypt, AgentConnection *conn, mode_t mode);
 Item *RemoteDirList(const char *dirname, bool encrypt, AgentConnection *conn);
 
 int TLSConnectCallCollect(ConnectionInfo *conn_info, const char *username);

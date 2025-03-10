@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -27,7 +27,6 @@
 
 #include <openssl/bn.h>                                     /* BN_*, BIGNUM */
 #include <openssl/rand.h>                                   /* RAND_* */
-#include <libcrypto-compat.h>
 
 #include <lastseen.h>
 #include <dir.h>

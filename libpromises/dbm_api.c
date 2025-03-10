@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -35,6 +35,7 @@
 #include <known_dirs.h>
 #include <string_lib.h>
 #include <time.h>          /* time() */
+#include <glob_lib.h>
 
 
 static bool DBPathLock(FileLock *lock, const char *filename);
@@ -166,6 +167,34 @@ char *DBIdToSubPath(dbid id, const char *subdb_name)
     free(filename);
 
     return native_filename;
+}
+
+Seq *SearchExistingSubDBNames(const dbid id)
+{
+    char *const glob_pattern = DBIdToSubPath(id, "*");
+    StringSet *const db_paths = GlobFileList(glob_pattern);
+    free(glob_pattern);
+
+    Seq *const db_names = SeqNew(StringSetSize(db_paths), free);
+    StringSetIterator iter = StringSetIteratorInit(db_paths);
+    const char *db_path;
+
+    // Start after the '$(sys.statedir)/packages_installed_' part of the path
+    const size_t from = strlen(GetStateDir()) + 1 +
+                        strlen(DB_PATHS_STATEDIR[id]) + 1;
+
+    // End before the '.lmdb' part of the path
+    const size_t chop = from + 1 + strlen(DBPrivGetFileExtension());
+
+    while ((db_path = StringSetIteratorNext(&iter)) != NULL)
+    {
+        char *const db_name = SafeStringNDuplicate(db_path + from,
+                                                   strlen(db_path) - chop);
+        SeqAppend(db_names, db_name);
+    }
+
+    StringSetDestroy(db_paths);
+    return db_names;
 }
 
 char *DBIdToPath(dbid id)
@@ -397,17 +426,23 @@ bool OpenDBInstance(DBHandle **dbp, dbid id, DBHandle *handle)
                 }
             }
 
-            DBPathUnLock(&lock);
-        }
-
-        if (handle->priv)
-        {
-            if (!DBMigrate(handle, id))
+            if (handle->priv != NULL)
             {
-                DBPrivCloseDB(handle->priv);
-                handle->priv = NULL;
-                handle->open_tstamp = -1;
+                if (!DBMigrate(handle, id))
+                {
+                    /* Migration failed. The best we can do is to move the
+                     * broken DB to the side and start fresh. */
+                    DBPrivCloseDB(handle->priv);
+                    DBPathMoveBroken(handle->filename);
+                    handle->priv = DBPrivOpenDB(handle->filename, id);
+                    if (handle->priv == DB_PRIV_DATABASE_BROKEN)
+                    {
+                        handle->priv = NULL;
+                    }
+                }
             }
+
+            DBPathUnLock(&lock);
         }
     }
 
@@ -497,8 +532,14 @@ void CloseDB(DBHandle *handle)
         handle->refcount--;
         if (handle->refcount == 0)
         {
+            FileLock lock = EMPTY_FILE_LOCK;
+            bool locked = DBPathLock(&lock, handle->filename);
             DBPrivCloseDB(handle->priv);
             handle->open_tstamp = -1;
+            if (locked)
+            {
+                DBPathUnLock(&lock);
+            }
         }
     }
 
@@ -518,6 +559,12 @@ bool CleanDB(DBHandle *handle)
     ThreadUnlock(&handle->lock);
 
     return ret;
+}
+
+int GetDBUsagePercentage(const DBHandle *handle)
+{
+    assert(handle != NULL);
+    return DBPrivGetDBUsagePercentage(handle->filename);
 }
 
 /**

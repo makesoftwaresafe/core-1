@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -407,19 +407,40 @@ static bool ReadCMDBClasses(EvalContext *ctx, JsonElement *classes)
             bool ret = AddCMDBClass(ctx, key, default_tags, NULL);
             if (!ret)
             {
-                /* Details should have been logged already. */
-                Log(LOG_LEVEL_ERR, "Failed to add CMDB class '%s'", key);
+                /* It does not have to be and error, it could be a result of
+                 * the class already existing. Anyways, details about
+                 * potential errors should have been logged already. */
+                Log(LOG_LEVEL_DEBUG, "Did not add CMDB class '%s'", key);
             }
         }
         else if (JsonGetContainerType(data) == JSON_CONTAINER_TYPE_ARRAY &&
                  JsonArrayContainsOnlyPrimitives(data))
         {
-            if ((JsonLength(data) != 1) ||
-                (!StringEqual(JsonPrimitiveGetAsString(JsonArrayGet(data, 0)), "any::")))
+            switch (JsonLength(data))
             {
+            case 0:
                 Log(LOG_LEVEL_ERR,
-                    "Invalid class specification '%s' in CMDB data, only '[\"any::\"]' allowed",
-                    JsonPrimitiveGetAsString(JsonArrayGet(data, 0)));
+                    "Empty class specification '[]' in CMDB data not allowed, only '[\"any::\"]'");
+                continue;;
+            case 1:
+                if (!StringEqual(JsonPrimitiveGetAsString(JsonArrayGet(data, 0)), "any::"))
+                {
+                    Log(LOG_LEVEL_ERR,
+                        "Invalid class specification '[\"%s\"]' in CMDB data, only '[\"any::\"]' allowed",
+                        JsonPrimitiveGetAsString(JsonArrayGet(data, 0)));
+                    continue;
+                }
+                // All good :)
+                break;
+            default:
+                {
+                    Writer *const str = StringWriter();
+                    JsonWriteCompact(str, data);
+                    Log(LOG_LEVEL_ERR,
+                        "Too many elements in class specification '%s' in CMDB data, only '[\"any::\"]' allowed",
+                        StringWriterData(str));
+                    WriterClose(str);
+                }
                 continue;
             }
             StringSet *default_tags = StringSetNew();
@@ -427,8 +448,10 @@ static bool ReadCMDBClasses(EvalContext *ctx, JsonElement *classes)
             bool ret = AddCMDBClass(ctx, key, default_tags, NULL);
             if (!ret)
             {
-                /* Details should have been logged already. */
-                Log(LOG_LEVEL_ERR, "Failed to add CMDB class '%s'", key);
+                /* It does not have to be and error, it could be a result of
+                 * the class already existing. Anyways, details about
+                 * potential errors should have been logged already. */
+                Log(LOG_LEVEL_DEBUG, "Did not add CMDB class '%s'", key);
             }
         }
         else if (JsonGetContainerType(data) == JSON_CONTAINER_TYPE_OBJECT)
@@ -465,8 +488,10 @@ static bool ReadCMDBClasses(EvalContext *ctx, JsonElement *classes)
             bool ret = AddCMDBClass(ctx, key, tags, comment);
             if (!ret)
             {
-                /* Details should have been logged already. */
-                Log(LOG_LEVEL_ERR, "Failed to add CMDB class '%s'", key);
+                /* It does not have to be and error, it could be a result of
+                 * the class already existing. Anyways, details about
+                 * potential errors should have been logged already. */
+                Log(LOG_LEVEL_DEBUG, "Did not add CMDB class '%s'", key);
             }
         }
         else
@@ -480,7 +505,7 @@ static bool ReadCMDBClasses(EvalContext *ctx, JsonElement *classes)
 bool LoadCMDBData(EvalContext *ctx)
 {
     char file_path[PATH_MAX] = {0};
-    strncpy(file_path, GetDataDir(), sizeof(file_path));
+    strncpy(file_path, GetDataDir(), sizeof(file_path) - 1);
     JoinPaths(file_path, sizeof(file_path), HOST_SPECIFIC_DATA_FILE);
     if (access(file_path, F_OK) != 0)
     {

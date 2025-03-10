@@ -70,6 +70,7 @@ static void test_newentry(void)
     KeyHostSeen q;
     assert_int_equal(ReadDB(db, "qiSHA-12345", &q, sizeof(q)), true);
 
+    assert_false(q.acknowledged);
     assert_int_equal(q.lastseen, 666);
     assert_double_close(q.Q.q, 0.0);
     assert_double_close(q.Q.dq, 0.0);
@@ -102,6 +103,7 @@ static void test_update(void)
     KeyHostSeen q;
     assert_int_equal(ReadDB(db, "qiSHA-12345", &q, sizeof(q)), true);
 
+    assert_false(q.acknowledged);
     assert_int_equal(q.lastseen, 1110);
     assert_double_close(q.Q.q, 555.0);
     assert_double_close(q.Q.dq, 555.0);
@@ -662,11 +664,7 @@ void FatalError(ARG_UNUSED char *s, ...)
     exit(42);
 }
 
-HashMethod CF_DEFAULT_DIGEST;
 pthread_mutex_t *cft_output;
-char VIPADDRESS[CF_MAX_IP_LEN];
-RSA *PUBKEY;
-bool MINUSF;
 
 char *HashPrintSafe(ARG_UNUSED char *dst, ARG_UNUSED size_t dst_size,
                     ARG_UNUSED const unsigned char *digest,

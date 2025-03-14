@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -99,7 +99,6 @@ bool CopyRegularFileDiskPerms(const char *source, const char *destination,
     }
 
     close(sd);
-    close(dd);
     return ret;
 }
 

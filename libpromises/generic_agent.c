@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -32,6 +32,7 @@
 #include <eval_context.h>
 #include <policy.h>
 #include <promises.h>
+#include <file_lib.h> // FileCanOpen()
 #include <files_lib.h>
 #include <files_names.h>
 #include <files_interfaces.h>
@@ -48,8 +49,8 @@
 #include <cleanup.h>
 #include <unix.h>
 #include <client_code.h>
-#include <string_lib.h>
-#include <regex.h>      // pcre
+#include <string_lib.h> // StringCopy()
+#include <regex.h>      // CompileRegex()
 #include <writer.h>
 #include <exec_tools.h>
 #include <list.h>
@@ -69,10 +70,10 @@
 #include <signals.h>
 #include <addr_lib.h>
 #include <openssl/evp.h>
-#include <libcrypto-compat.h>
 #include <libgen.h>
 #include <cleanup.h>
 #include <cmdb.h>               /* LoadCMDBData() */
+#include "cf3.defs.h"
 
 #define AUGMENTS_VARIABLES_TAGS "tags"
 #define AUGMENTS_VARIABLES_DATA "value"
@@ -133,13 +134,61 @@ ENTERPRISE_VOID_FUNC_2ARG_DEFINE_STUB(void, GenericAgentSetDefaultDigest, HashMe
     *digest_len = CF_MD5_LEN;
 }
 
+void SetCFEngineRoles(EvalContext *ctx)
+{
+    char cf_hub_path[PATH_MAX];
+    snprintf(cf_hub_path, sizeof(cf_hub_path), "%s%ccf-hub", GetBinDir(), FILE_SEPARATOR);
+
+    const bool is_reporting_hub = (access(cf_hub_path, F_OK) == 0);
+    const bool is_policy_server = EvalContextClassGet(ctx, "default", "policy_server");
+
+    if (!is_policy_server && !is_reporting_hub)
+    {
+        EvalContextClassPutHard(ctx, "cfengine_client", "report");
+        Rlist *const roles = RlistFromSplitString("Client", ',');
+        EvalContextVariablePutSpecial(ctx, SPECIAL_SCOPE_SYS, "cfengine_roles", roles, CF_DATA_TYPE_STRING_LIST, "inventory,attribute_name=CFEngine roles");
+        RlistDestroy(roles);
+        return;
+    }
+
+    if (is_reporting_hub)
+    {
+        EvalContextClassPutHard(ctx, "cfengine_reporting_hub", "report");
+    }
+
+    // Community policy server:
+    if (is_policy_server && !is_reporting_hub)
+    {
+        Rlist *const roles = RlistFromSplitString("Policy server", ',');
+        EvalContextVariablePutSpecial(ctx, SPECIAL_SCOPE_SYS, "cfengine_roles", roles, CF_DATA_TYPE_STRING_LIST, "inventory,attribute_name=CFEngine roles");
+        RlistDestroy(roles);
+        return;
+    }
+
+    // Enterprise hub bootstrapped to another policy server:
+    // TODO: This is a weird situation, should we print a warning?
+    if (is_reporting_hub && !is_policy_server)
+    {
+        Rlist *const roles = RlistFromSplitString("Reporting hub", ',');
+        EvalContextVariablePutSpecial(ctx, SPECIAL_SCOPE_SYS, "cfengine_roles", roles, CF_DATA_TYPE_STRING_LIST, "inventory,attribute_name=CFEngine roles");
+        RlistDestroy(roles);
+        return;
+    }
+
+    // Normal Enterprise hub:
+    assert(is_policy_server && is_reporting_hub);
+    Rlist *const roles = RlistFromSplitString("Policy server,Reporting hub", ',');
+    EvalContextVariablePutSpecial(ctx, SPECIAL_SCOPE_SYS, "cfengine_roles", roles, CF_DATA_TYPE_STRING_LIST, "inventory,attribute_name=CFEngine roles");
+    RlistDestroy(roles);
+    return;
+}
+
 void MarkAsPolicyServer(EvalContext *ctx)
 {
     EvalContextClassPutHard(ctx, "am_policy_hub",
                             "source=bootstrap,deprecated,alias=policy_server");
     Log(LOG_LEVEL_VERBOSE, "Additional class defined: am_policy_hub");
-    EvalContextClassPutHard(ctx, "policy_server",
-                            "inventory,attribute_name=CFEngine roles,source=bootstrap");
+    EvalContextClassPutHard(ctx, "policy_server", "report");
     Log(LOG_LEVEL_VERBOSE, "Additional class defined: policy_server");
 }
 
@@ -942,10 +991,12 @@ static void AddPolicyEntryVariables (EvalContext *ctx, const GenericAgentConfig 
 void GenericAgentDiscoverContext(EvalContext *ctx, GenericAgentConfig *config,
                                  const char *program_name)
 {
+    assert(config != NULL);
+
     strcpy(VPREFIX, "");
     if (program_name != NULL)
     {
-        strncpy(CF_PROGRAM_NAME, program_name, sizeof(CF_PROGRAM_NAME));
+        strncpy(CF_PROGRAM_NAME, program_name, sizeof(CF_PROGRAM_NAME) - 1);
     }
 
     Log(LOG_LEVEL_VERBOSE, " %s", NameVersion());
@@ -1009,7 +1060,8 @@ void GenericAgentDiscoverContext(EvalContext *ctx, GenericAgentConfig *config,
         {
             Log(LOG_LEVEL_INFO, "Assuming role as policy server,"
                 " with policy distribution point at: %s", GetMasterDir());
-            MarkAsPolicyServer(ctx);
+            MarkAsPolicyServer(ctx); // Sets policy_server class
+            SetCFEngineRoles(ctx); // Checks policy_server class
 
             if (!MasterfileExists(GetMasterDir()))
             {
@@ -1024,6 +1076,9 @@ void GenericAgentDiscoverContext(EvalContext *ctx, GenericAgentConfig *config,
         {
             Log(LOG_LEVEL_INFO, "Assuming role as regular client,"
                 " bootstrapping to policy server: %s", bootstrap_arg);
+            // Once we have set, or in this case not set,
+            // the policy_server class, we can set roles:
+            SetCFEngineRoles(ctx);
 
             if (config->agent_specific.agent.bootstrap_trust_server)
             {
@@ -1066,10 +1121,17 @@ void GenericAgentDiscoverContext(EvalContext *ctx, GenericAgentConfig *config,
             UpdateLastPolicyUpdateTime(ctx);
             if (GetAmPolicyHub())
             {
-                MarkAsPolicyServer(ctx);
+                // Hub:
+                MarkAsPolicyServer(ctx); // Sets policy_server class
+                SetCFEngineRoles(ctx); // Checks policy_server class
 
                 /* Should this go in MarkAsPolicyServer() ? */
                 CheckAndSetHAState(GetWorkDir(), ctx);
+            }
+            else
+            {
+                // Client, set appropriate role:
+                SetCFEngineRoles(ctx);
             }
         }
         else
@@ -1080,14 +1142,17 @@ void GenericAgentDiscoverContext(EvalContext *ctx, GenericAgentConfig *config,
     }
 
     /* Load CMDB data *before* augments. */
-    if (!LoadCMDBData(ctx))
+    if (!config->agent_specific.common.no_host_specific && !LoadCMDBData(ctx))
     {
         Log(LOG_LEVEL_ERR, "Failed to load CMDB data");
     }
 
-    /* load augments here so that they can make use of the classes added above
-     * (especially 'am_policy_hub' and 'policy_server') */
-    LoadAugments(ctx, config);
+    if (!config->agent_specific.common.no_augments)
+    {
+        /* load augments here so that they can make use of the classes added above
+         * (especially 'am_policy_hub' and 'policy_server') */
+        LoadAugments(ctx, config);
+    }
 }
 
 static bool IsPolicyPrecheckNeeded(GenericAgentConfig *config, bool force_validation)
@@ -1526,7 +1591,17 @@ void GenericAgentInitialize(EvalContext *ctx, GenericAgentConfig *config)
 
     EvalContextClassPutHard(ctx, "any", "source=agent");
 
-    GenericAgentAddEditionClasses(ctx);
+    GenericAgentAddEditionClasses(ctx); // May set "enterprise_edition" class
+
+    const Class *enterprise_edition = EvalContextClassGet(ctx, "default", "enterprise_edition");
+    if (enterprise_edition == NULL)
+    {
+        EvalContextVariablePutSpecial(ctx, SPECIAL_SCOPE_SYS, "cf_edition", "community", CF_DATA_TYPE_STRING, "derived-from=enterprise_edition,report");
+    }
+    else 
+    {
+        EvalContextVariablePutSpecial(ctx, SPECIAL_SCOPE_SYS, "cf_edition", "enterprise", CF_DATA_TYPE_STRING, "derived-from=enterprise_edition,report");
+    }
 
     /* Make sure the chroot for recording changes this process would normally
      * make on the system is setup if that was requested. */
@@ -2515,8 +2590,14 @@ GenericAgentConfig *GenericAgentConfigNewDefault(AgentType agent_type, bool tty_
     /* By default we run promises.cf as the last step of boostrapping */
     config->agent_specific.agent.bootstrap_trigger_policy = true;
 
+    /* By default we start services during bootstrap */
+    config->agent_specific.agent.skip_bootstrap_service_start = false;
+
     /* Log classes */
     config->agent_specific.agent.report_class_log = false;
+
+    config->agent_specific.common.no_augments = false;
+    config->agent_specific.common.no_host_specific = false;
 
     switch (agent_type)
     {
@@ -2721,7 +2802,7 @@ void GenericAgentShowContextsFormatted(EvalContext *ctx, const char *regexp)
 
     Seq *seq = SeqNew(1000, free);
 
-    pcre *rx = CompileRegex(regexp);
+    Regex *rx = CompileRegex(regexp);
 
     if (rx == NULL)
     {
@@ -2751,7 +2832,7 @@ void GenericAgentShowContextsFormatted(EvalContext *ctx, const char *regexp)
         free(class_name);
     }
 
-    pcre_free(rx);
+    RegexDestroy(rx);
 
     SeqSort(seq, StrCmpWrapper, NULL);
 
@@ -2777,7 +2858,7 @@ void GenericAgentShowVariablesFormatted(EvalContext *ctx, const char *regexp)
 
     Seq *seq = SeqNew(2000, free);
 
-    pcre *rx = CompileRegex(regexp);
+    Regex *rx = CompileRegex(regexp);
 
     if (rx == NULL)
     {
@@ -2839,7 +2920,7 @@ void GenericAgentShowVariablesFormatted(EvalContext *ctx, const char *regexp)
         free(varname);
     }
 
-    pcre_free(rx);
+    RegexDestroy(rx);
 
     SeqSort(seq, StrCmpWrapper, NULL);
 

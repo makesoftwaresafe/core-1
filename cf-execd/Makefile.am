@@ -26,15 +26,16 @@ noinst_LTLIBRARIES = libcf-execd.la libcf-execd-test.la
 AM_CPPFLAGS = \
 	-I$(srcdir)/../libpromises \
 	-I$(srcdir)/../libntech/libutils \
+	-I$(srcdir)/../libcfecompat \
 	-I$(srcdir)/../libcfnet \
 	-I$(srcdir)/../libenv \
 	-I$(srcdir)/../cf-check \
-	$(PCRE_CPPFLAGS) \
+	$(PCRE2_CPPFLAGS) \
 	$(OPENSSL_CPPFLAGS) \
 	$(ENTERPRISE_CPPFLAGS)
 
 AM_CFLAGS = \
-	$(PCRE_CFLAGS) \
+	$(PCRE2_CFLAGS) \
 	$(OPENSSL_CFLAGS) \
 	$(PTHREAD_CFLAGS) \
 	$(ENTERPRISE_CFLAGS)

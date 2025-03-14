@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -97,32 +97,43 @@ bool FileWriteOver(char *filename, char *contents)
 
 static bool MakeParentDirectoryImpl(EvalContext *ctx, const Promise *pp, const Attributes *attr,
                                     PromiseResult *result, const char *parentandchild,
-                                    bool force, bool internal, bool *created);
+                                    bool force, bool internal, bool *created,
+                                    mode_t perms_mode);
 
 bool MakeParentDirectory(const char *parentandchild, bool force, bool *created)
 {
     /* just use the complex function with no promise info */
     return MakeParentDirectoryImpl(NULL, NULL, NULL, NULL,
-                                   parentandchild, force, false, created);
+                                   parentandchild, force, false, created, DEFAULTMODE);
+}
+
+bool MakeParentDirectoryPerms(const char *parentandchild, bool force, bool *created, mode_t perms_mode)
+{
+    return MakeParentDirectoryImpl(NULL, NULL, NULL, NULL,
+                                   parentandchild, force, false, created, perms_mode);
 }
 
 bool MakeParentInternalDirectory(const char *parentandchild, bool force, bool *created)
 {
     /* just use the complex function with no promise info */
     return MakeParentDirectoryImpl(NULL, NULL, NULL, NULL,
-                                   parentandchild, force, true, created);
+                                   parentandchild, force, true, created, DEFAULTMODE);
 }
 
-bool MakeParentDirectoryForPromise(EvalContext *ctx, const Promise *pp, const Attributes *attr,
-                                   PromiseResult *result, const char *parentandchild,
-                                   bool force, bool *created)
+bool MakeParentDirectoryForPromise(EvalContext *ctx, const Promise *pp,
+                                   const Attributes *attr,
+                                   PromiseResult *result,
+                                   const char *parentandchild,
+                                   bool force, bool *created,
+                                   const mode_t perms_mode)
 {
-    return MakeParentDirectoryImpl(ctx, pp, attr, result, parentandchild, force, false, created);
+    return MakeParentDirectoryImpl(ctx, pp, attr, result, parentandchild,
+                                   force, false, created, perms_mode);
 }
 
 static bool MakeParentDirectoryImpl(EvalContext *ctx, const Promise *pp, const Attributes *attr,
                                     PromiseResult *result, const char *parentandchild,
-                                    bool force, bool internal, bool *created)
+                                    bool force, bool internal, bool *created, mode_t perms_mode)
 {
     char *sp;
     char currentpath[CF_BUFSIZE];
@@ -332,7 +343,7 @@ static bool MakeParentDirectoryImpl(EvalContext *ctx, const Promise *pp, const A
             {
                 mask = umask(0);
 
-                if (mkdir(currentpath, DEFAULTMODE) == -1)
+                if (mkdir(currentpath, perms_mode) == -1)
                 {
                     if (errno != EEXIST)
                     {
@@ -409,7 +420,7 @@ static bool MakeParentDirectoryImpl(EvalContext *ctx, const Promise *pp, const A
     return true;
 }
 
-bool LoadFileAsItemList(Item **liststart, const char *file, EditDefaults edits)
+bool LoadFileAsItemList(Item **liststart, const char *file, EditDefaults edits, bool only_checks)
 {
     {
         struct stat statbuf;
@@ -431,6 +442,12 @@ bool LoadFileAsItemList(Item **liststart, const char *file, EditDefaults edits)
             Log(LOG_LEVEL_INFO, "%s is not a plain file", file);
             return false;
         }
+    }
+    if (only_checks)
+    {
+        /* Checks done and none of them failed and returned we can just return
+         * true here. */
+        return true;
     }
 
     FILE *fp = safe_fopen(file, "rt");

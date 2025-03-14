@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -21,6 +21,9 @@
   (COSL) may apply to this file if you as a licensee so wish it. See
   included file COSL.txt.
 */
+
+#include <platform.h>
+#include <getopt.h>
 
 #include <generic_agent.h>
 
@@ -55,6 +58,13 @@ static const char *const CF_PROMISES_MANPAGE_LONG_DESCRIPTION = "cf-promises is 
     "policy consisting of multiple files. Third, it checks for semantic errors, e.g. specific attribute set rules. "
     "Finally, cf-promises attempts to expose errors by partially evaluating the policy, resolving as many variable and "
     "classes promise statements as possible. At no point does cf-promises make any changes to the system.";
+
+static const Component COMPONENT =
+{
+    .name = "cf-promises",
+    .website = CF_WEBSITE,
+    .copyright = CF_COPYRIGHT
+};
 
 /* Long-style only options, values must start above max ASCII value. */
 enum
@@ -425,7 +435,7 @@ GenericAgentConfig *CheckOpts(int argc, char **argv)
         case 'h':
         {
             Writer *w = FileWriter(stdout);
-            WriterWriteHelp(w, "cf-promises", OPTIONS, HINTS, NULL, false, true);
+            WriterWriteHelp(w, &COMPONENT, OPTIONS, HINTS, NULL, false, true);
             FileWriterDetach(w);
         }
         DoCleanupAndExit(EXIT_SUCCESS);
@@ -498,7 +508,7 @@ GenericAgentConfig *CheckOpts(int argc, char **argv)
         default:
         {
             Writer *w = FileWriter(stdout);
-            WriterWriteHelp(w, "cf-promises", OPTIONS, HINTS, NULL, false, true);
+            WriterWriteHelp(w, &COMPONENT, OPTIONS, HINTS, NULL, false, true);
             FileWriterDetach(w);
         }
         DoCleanupAndExit(EXIT_FAILURE);

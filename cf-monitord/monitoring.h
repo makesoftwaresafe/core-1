@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -34,7 +34,7 @@ int NovaRegisterSlot(const char *name, const char *description,
                      const char *units, double expected_minimum,
                      double expected_maximum, bool consolidable);
 void NovaNamedEvent(const char *eventname, double value);
-void GetObservable(int i, char *name, char *desc);
+void GetObservable(int i, char *name, size_t name_size, char *desc, size_t desc_size);
 void SetMeasurementPromises(Item ** classlist);
 void LoadSlowlyVaryingObservations(EvalContext *ctx);
 void MakeTimekey(time_t time, char *result);

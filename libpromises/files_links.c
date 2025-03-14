@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -137,9 +137,9 @@ PromiseResult VerifyLink(EvalContext *ctx, char *destination, const char *source
         }
 
         bool dir_created = false;
-        if (MakeParentDirectoryForPromise(ctx, pp, attr, &result,
-                                          destination, attr->move_obstructions,
-                                          &dir_created))
+        if (MakeParentDirectoryForPromise(ctx, pp, attr, &result, destination,
+                                          attr->move_obstructions,
+                                          &dir_created, DEFAULTMODE))
         {
             if (dir_created)
             {

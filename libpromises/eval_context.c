@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -110,7 +110,7 @@ TYPED_MAP_DEFINE(RemoteVarPromises, char *, Seq *,
                  SeqDestroy_untyped)
 
 
-static pcre *context_expression_whitespace_rx = NULL;
+static Regex *context_expression_whitespace_rx = NULL;
 
 #include <policy.h>
 
@@ -628,7 +628,7 @@ static ExpressionValue EvalTokenFromList(const char *token, void *param)
 
 /**********************************************************************/
 
-static bool EvalWithTokenFromList(const char *expr, StringSet *token_set)
+bool EvalWithTokenFromList(const char *expr, StringSet *token_set)
 {
     ParseResult res = ParseExpression(expr, 0, strlen(expr));
 
@@ -2447,7 +2447,25 @@ static Variable *VariableResolve2(const EvalContext *ctx, const VarRef *ref)
     Variable *var;
     if (table)
     {
-        var = VariableTableGet(table, ref);
+        /* NOTE: The 'this.' scope should ignore namespaces because it contains
+         *       iteration variables that don't have the namespace in their ref
+         *       string and so VariableTableGet() would fail to find them with
+         *       the namespace. And similar logic applies to other special
+         *       scopes except for 'def.' which is actually not so special. */
+        if ((SpecialScopeFromString(ref->scope) != SPECIAL_SCOPE_NONE) &&
+            (SpecialScopeFromString(ref->scope) != SPECIAL_SCOPE_DEF) &&
+            (ref->ns != NULL))
+        {
+            VarRef *ref2 = VarRefCopy(ref);
+            free(ref2->ns);
+            ref2->ns = NULL;
+            var = VariableTableGet(table, ref2);
+            VarRefDestroy(ref2);
+        }
+        else
+        {
+            var = VariableTableGet(table, ref);
+        }
         if (var)
         {
             return var;
@@ -2814,12 +2832,20 @@ bool EvalContextFunctionCacheGet(const EvalContext *ctx,
                                  const FnCall *fp ARG_UNUSED,
                                  const Rlist *args, Rval *rval_out)
 {
+    assert(fp != NULL);
+    assert(fp->name != NULL);
+    assert(ctx != NULL);
+
     if (!(ctx->eval_options & EVAL_OPTION_CACHE_SYSTEM_FUNCTIONS))
     {
         return false;
     }
 
-    Rval *rval = FuncCacheMapGet(ctx->function_cache, args);
+    // The cache key is made of the function name and all args values
+    Rlist *args_copy = RlistCopy(args);
+    Rlist *key = RlistPrepend(&args_copy, fp->name, RVAL_TYPE_SCALAR);
+    Rval *rval = FuncCacheMapGet(ctx->function_cache, key);
+    RlistDestroy(key);
     if (rval)
     {
         if (rval_out)
@@ -2838,6 +2864,10 @@ void EvalContextFunctionCachePut(EvalContext *ctx,
                                  const FnCall *fp ARG_UNUSED,
                                  const Rlist *args, const Rval *rval)
 {
+    assert(fp != NULL);
+    assert(fp->name != NULL);
+    assert(ctx != NULL);
+
     if (!(ctx->eval_options & EVAL_OPTION_CACHE_SYSTEM_FUNCTIONS))
     {
         return;
@@ -2845,7 +2875,11 @@ void EvalContextFunctionCachePut(EvalContext *ctx,
 
     Rval *rval_copy = xmalloc(sizeof(Rval));
     *rval_copy = RvalCopy(*rval);
-    FuncCacheMapInsert(ctx->function_cache, RlistCopy(args), rval_copy);
+
+    Rlist *args_copy = RlistCopy(args);
+    Rlist *key = RlistPrepend(&args_copy, fp->name, RVAL_TYPE_SCALAR);
+    
+    FuncCacheMapInsert(ctx->function_cache, key, rval_copy);
 }
 
 /* cfPS and associated machinery */
@@ -3466,11 +3500,70 @@ bool EvalContextIsIgnoringLocks(const EvalContext *ctx)
     return ctx->ignore_locks;
 }
 
+StringSet *ClassesMatchingLocalRecursive(
+    const EvalContext *ctx,
+    const char *regex,
+    const Rlist *tags,
+    bool first_only,
+    size_t stack_index)
+{
+    assert(ctx != NULL);
+    StackFrame *frame = SeqAt(ctx->stack, stack_index);
+    StringSet *matches;
+    if (frame->type == STACK_FRAME_TYPE_BUNDLE)
+    {
+        ClassTableIterator *iter = ClassTableIteratorNew(
+            frame->data.bundle.classes,
+            frame->data.bundle.owner->ns,
+            false,
+            true); // from EvalContextClassTableIteratorNewLocal()
+        matches = ClassesMatching(ctx, iter, regex, tags, first_only);
+        ClassTableIteratorDestroy(iter);
+    }
+    else
+    {
+        matches = StringSetNew(); // empty for passing up the recursion chain
+    }
+
+    if (stack_index > 0 && frame->inherits_previous)
+    {
+        StringSet *parent_matches = ClassesMatchingLocalRecursive(
+            ctx, regex, tags, first_only, stack_index - 1);
+        StringSetJoin(matches, parent_matches, xstrdup);
+        StringSetDestroy(parent_matches);
+    }
+
+    return matches;
+}
+
+StringSet *ClassesMatchingLocal(
+    const EvalContext *ctx,
+    const char *regex,
+    const Rlist *tags,
+    bool first_only)
+{
+    assert(ctx != NULL);
+    return ClassesMatchingLocalRecursive(
+        ctx, regex, tags, first_only, SeqLength(ctx->stack) - 1);
+}
+
+StringSet *ClassesMatchingGlobal(
+    const EvalContext *ctx,
+    const char *regex,
+    const Rlist *tags,
+    bool first_only)
+{
+    ClassTableIterator *iter =
+        EvalContextClassTableIteratorNewGlobal(ctx, NULL, true, true);
+    StringSet *matches = ClassesMatching(ctx, iter, regex, tags, first_only);
+    ClassTableIteratorDestroy(iter);
+    return matches;
+}
 StringSet *ClassesMatching(const EvalContext *ctx, ClassTableIterator *iter, const char* regex, const Rlist *tags, bool first_only)
 {
     StringSet *matching = StringSetNew();
 
-    pcre *rx = CompileRegex(regex);
+    Regex *rx = CompileRegex(regex);
 
     Class *cls;
     while ((cls = ClassTableIteratorNext(iter)))
@@ -3530,7 +3623,7 @@ StringSet *ClassesMatching(const EvalContext *ctx, ClassTableIterator *iter, con
 
     if (rx)
     {
-        pcre_free(rx);
+        RegexDestroy(rx);
     }
 
     return matching;

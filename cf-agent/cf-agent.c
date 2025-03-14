@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -24,6 +24,7 @@
 
 
 #include <platform.h>
+#include <getopt.h>
 #include <generic_agent.h>
 
 #include <actuator.h>
@@ -154,7 +155,7 @@ static PromiseResult KeepAgentPromise(EvalContext *ctx, const Promise *pp, void 
 static void NewTypeContext(TypeSequence type);
 static void DeleteTypeContext(EvalContext *ctx, TypeSequence type);
 static PromiseResult ParallelFindAndVerifyFilesPromises(EvalContext *ctx, const Promise *pp);
-static bool VerifyBootstrap(void);
+static bool VerifyBootstrap(bool skip_cf_execd_check);
 static void KeepPromiseBundles(EvalContext *ctx, const Policy *policy, GenericAgentConfig *config);
 static void KeepPromises(EvalContext *ctx, const Policy *policy, GenericAgentConfig *config);
 static int NoteBundleCompliance(const Bundle *bundle, int save_pr_kept, int save_pr_repaired, int save_pr_notkept, struct timespec start);
@@ -177,6 +178,13 @@ static const char *const CF_AGENT_MANPAGE_LONG_DESCRIPTION =
         "provided bundlesequence (this is normally specified in the common control body). "
         "For each bundle, cf-agent groups promise statements according to their type. Promise types are then evaluated in a preset "
         "order to ensure fast system convergence to policy.\n";
+
+static const Component COMPONENT =
+{
+    .name = "cf-agent",
+    .website = CF_WEBSITE,
+    .copyright = CF_COPYRIGHT
+};
 
 static const struct option OPTIONS[] =
 {
@@ -203,9 +211,12 @@ static const struct option OPTIONS[] =
     /* Only long option for the rest */
     {"ignore-preferred-augments", no_argument, 0, 0},
     {"log-modules", required_argument, 0, 0},
+    {"no-augments", no_argument, 0, 0},
+    {"no-host-specific-data", no_argument, 0, 0},
     {"show-evaluated-classes", optional_argument, 0, 0 },
     {"show-evaluated-vars", optional_argument, 0, 0 },
     {"skip-bootstrap-policy-run", no_argument, 0, 0 },
+    {"skip-bootstrap-service-start", no_argument, 0, 0 },
     {"skip-db-check", optional_argument, 0, 0 },
     {"simulate", required_argument, 0, 0},
     {NULL, 0, 0, '\0'}
@@ -235,9 +246,12 @@ static const char *const HINTS[] =
     "Log timestamps on each line of log output",
     "Ignore def_preferred.json file in favor of def.json",
     "Enable even more detailed debug logging for specific areas of the implementation. Use together with '-d'. Use --log-modules=help for a list of available modules",
+    "Do not load augments (def.json)",
+    "Do not load host-specific data (host_specific.json)",
     "Show *final* evaluated classes, including those defined in common bundles in policy. Optionally can take a regular expression.",
     "Show *final* evaluated variables, including those defined without dependency to user-defined classes in policy. Optionally can take a regular expression.",
     "Do not run policy as the last step of the bootstrap process",
+    "Do not start CFEngine services as part of the bootstrap process",
     "Do not run database integrity checks and repairs at startup",
     "Run in simulate mode, either 'manifest', 'manifest-full' or 'diff'",
     NULL
@@ -288,6 +302,14 @@ int main(int argc, char *argv[])
     {
         Log(LOG_LEVEL_ERR, "Error reading CFEngine policy. Exiting...");
         DoCleanupAndExit(EXIT_FAILURE);
+    }
+
+    if ((config->agent_specific.agent.bootstrap_argument != NULL) &&
+        config->agent_specific.agent.skip_bootstrap_service_start &&
+        !EvalContextClassPutHard(ctx, "bootstrap_skip_services", "source=environment"))
+    {
+        Log(LOG_LEVEL_ERR, "Failed to define the 'bootstrap_skip_services' class");
+        /* not a fatal issue, let's continue the bootstrap process */
     }
 
     int ret = 0;
@@ -344,7 +366,8 @@ int main(int argc, char *argv[])
     }
 
     PolicyDestroy(policy); /* Can we safely do this earlier ? */
-    if (config->agent_specific.agent.bootstrap_argument && !VerifyBootstrap())
+    if (config->agent_specific.agent.bootstrap_argument &&
+        !VerifyBootstrap(config->agent_specific.agent.skip_bootstrap_service_start))
     {
         PolicyServerRemoveFile(GetWorkDir());
         WriteAmPolicyHubFile(false);
@@ -598,7 +621,7 @@ static GenericAgentConfig *CheckOpts(int argc, char **argv)
         case 'h':
             {
                 Writer *w = FileWriter(stdout);
-                WriterWriteHelp(w, "cf-agent", OPTIONS, HINTS, NULL, false, true);
+                WriterWriteHelp(w, &COMPONENT, OPTIONS, HINTS, NULL, false, true);
                 FileWriterDetach(w);
             }
             DoCleanupAndExit(EXIT_SUCCESS);
@@ -680,6 +703,14 @@ static GenericAgentConfig *CheckOpts(int argc, char **argv)
                     DoCleanupAndExit(EXIT_FAILURE);
                 }
             }
+            else if (StringEqual(option_name, "no-augments"))
+            {
+                config->agent_specific.common.no_augments = true;
+            }
+            else if (StringEqual(option_name, "no-host-specific-data"))
+            {
+                config->agent_specific.common.no_host_specific = true;
+            }
             else if (StringEqual(option_name, "show-evaluated-classes"))
             {
                 if (optarg == NULL)
@@ -699,6 +730,10 @@ static GenericAgentConfig *CheckOpts(int argc, char **argv)
             else if (StringEqual(option_name, "skip-bootstrap-policy-run"))
             {
                 config->agent_specific.agent.bootstrap_trigger_policy = false;
+            }
+            else if (StringEqual(option_name, "skip-bootstrap-service-start"))
+            {
+                config->agent_specific.agent.skip_bootstrap_service_start = true;
             }
             else if (StringEqual(option_name, "skip-db-check"))
             {
@@ -755,7 +790,7 @@ static GenericAgentConfig *CheckOpts(int argc, char **argv)
         default:
             {
                 Writer *w = FileWriter(stdout);
-                WriterWriteHelp(w, "cf-agent", OPTIONS, HINTS, NULL, false, true);
+                WriterWriteHelp(w, &COMPONENT, OPTIONS, HINTS, NULL, false, true);
                 FileWriterDetach(w);
             }
             DoCleanupAndExit(EXIT_FAILURE);
@@ -2118,7 +2153,7 @@ static PromiseResult ParallelFindAndVerifyFilesPromises(EvalContext *ctx, const 
 
 /**************************************************************/
 
-static bool VerifyBootstrap(void)
+static bool VerifyBootstrap(bool skip_cf_execd_check)
 {
     const char *policy_server = PolicyServerGet();
     if (NULL_OR_EMPTY(policy_server))
@@ -2145,7 +2180,7 @@ static bool VerifyBootstrap(void)
     ClearProcessTable();
     LoadProcessTable();
 
-    if (!IsProcessNameRunning(".*cf-execd.*"))
+    if (!skip_cf_execd_check && !IsProcessNameRunning(".*cf-execd.*"))
     {
         Log(LOG_LEVEL_ERR, "Bootstrapping failed, cf-execd is not running");
         return false;

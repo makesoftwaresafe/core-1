@@ -21,7 +21,6 @@ bundle agent test
         "description"
         string => "Test cf-secret with different arguments/order";
 
-
     vars:
         "text" string => "This secret sauce should be encrypted and decrypted.";
 

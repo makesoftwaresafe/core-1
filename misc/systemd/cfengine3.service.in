@@ -1,6 +1,6 @@
 [Unit]
 Description=CFEngine 3 umbrella service
-Documentation=https://docs.cfengine.com/ https://tracker.mender.io
+Documentation=https://docs.cfengine.com/ https://northerntech.atlassian.net
 After=syslog.target
 
 # Try to start all the sub-services. 'Wants' is fault-tolerant so if some are
@@ -9,8 +9,8 @@ Wants=cf-serverd.service
 Wants=cf-execd.service
 Wants=cf-monitord.service
 Wants=cf-postgres.service
+Wants=cf-php-fpm.service
 Wants=cf-apache.service
-Wants=cf-runalerts.service
 Wants=cf-hub.service
 Wants=cf-reactor.service
 
@@ -19,8 +19,8 @@ Before=cf-serverd.service
 Before=cf-execd.service
 Before=cf-monitord.service
 Before=cf-postgres.service
+Before=cf-php-fpm.service
 Before=cf-apache.service
-Before=cf-runalerts.service
 Before=cf-hub.service
 Before=cf-reactor.service
 

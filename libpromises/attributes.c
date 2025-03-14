@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -37,6 +37,7 @@
 #define CF_TRANSACTION   "action"
 
 static FilePerms GetPermissionConstraints(const EvalContext *ctx, const Promise *pp);
+static TransactionContext GetTransactionConstraints(const EvalContext *ctx, const Promise *pp);
 
 void ClearFilesAttributes(Attributes *whom)
 {
@@ -663,7 +664,7 @@ LogLevel ActionAttributeLogLevelFromString(const char *log_level)
     }
 }
 
-TransactionContext GetTransactionConstraints(const EvalContext *ctx, const Promise *pp)
+static TransactionContext GetTransactionConstraints(const EvalContext *ctx, const Promise *pp)
 {
     TransactionContext t;
     char *value;
@@ -1157,9 +1158,14 @@ Packages GetPackageConstraints(const EvalContext *ctx, const Promise *pp)
         if (bodies_and_args != NULL &&
             SeqLength(bodies_and_args) > 0)
         {
+            Log(LOG_LEVEL_VERBOSE, "Package promise had no package_method attribute so it's being assigned a value of 'generic' as default.");
             const Body *bp = SeqAt(bodies_and_args, 0); // guaranteed to be non-NULL
             CopyBodyConstraintsToPromise((EvalContext*)ctx, (Promise*)pp, bp);
             has_generic_package_method = true;
+        }
+        else
+        {
+            Log(LOG_LEVEL_VERBOSE, "Package promise had no package_method attibute and policy had no 'generic' package_method body so will use v2 package modules.");
         }
         SeqDestroy(bodies_and_args);
     }
@@ -1250,10 +1256,31 @@ NewPackages GetNewPackageConstraints(const EvalContext *ctx, const Promise *pp)
     p.package_options = PromiseGetConstraintAsList(ctx, "options", pp);
 
     p.is_empty = (memcmp(&p, &empty, sizeof(NewPackages)) == 0);
+
+    bool have_policy = PromiseBundleOrBodyConstraintExists(ctx, "policy", pp);
+    bool have_package_policy = PromiseBundleOrBodyConstraintExists(ctx, "package_policy", pp);
+    if (!have_policy && !have_package_policy)
+    {
+        Log(LOG_LEVEL_DEBUG, "Package promise has no policy or package_policy attribute. Checking if default:control_common.package_module is defined to default the policy attribute to 'present' and force use of v2 package promise (package_module).");
+
+        const void *ret = EvalContextVariableControlCommonGet(ctx, COMMON_CONTROL_PACKAGE_MODULE);
+        PackageModuleBody *package_module = GetPackageModuleFromContext(ctx, ret);
+
+        if (package_module != NULL)
+        {
+            Log(LOG_LEVEL_DEBUG, "Package promise had no policy or package_policy attribute and default:control_common.package_module is defined so defaulting to v2 package promise (package_module) and setting 'policy' attribute to 'present' and 'package_module' to %s.", package_module->name);
+            PromiseAppendConstraint((Promise*)pp, "policy", (Rval) {xstrdup("present"), RVAL_TYPE_SCALAR }, false);
+            PromiseAppendConstraint((Promise*)pp, "package_module_name", (Rval) {xstrdup(package_module->name), RVAL_TYPE_SCALAR }, false);
+        }
+        else
+        {
+            Log(LOG_LEVEL_VERBOSE, "Package promise had no policy or package_policy attribute and default:control_common.package_module is undefined so will use v1 package promise (package_method).");
+        }
+    }
     p.package_policy = GetNewPackagePolicy(PromiseGetConstraintAsRval(pp, "policy", RVAL_TYPE_SCALAR),
                                            new_packages_actions);
 
-    /* We can have only policy specified in new package promise definition. */
+    /* We can have only policy specified in v2 package promise (package_module) definition. */
     if (p.package_policy != NEW_PACKAGE_ACTION_NONE)
     {
         p.is_empty = false;

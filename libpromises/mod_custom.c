@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -34,6 +34,7 @@
 #include <var_expressions.h> // StringContainsUnresolved(), StringIsBareNonScalarRef()
 #include <map.h>             // Map*
 #include <locks.h>           // AcquireLock()
+#include <process_lib.h>     // GracefulTerminate(), GetProcessStartTime()
 
 static Map *custom_modules = NULL;
 
@@ -125,7 +126,7 @@ static bool GetInterpreterAndPath(
     return true;
 }
 
-static inline bool PromiseModule_LogJson(JsonElement *object, const Promise *pp)
+static inline LogLevel PromiseModule_LogJson(JsonElement *object, const Promise *pp, const char *promise_log_level)
 {
     const char *level_string = JsonObjectGetAsString(object, "level");
     const char *message = JsonObjectGetAsString(object, "message");
@@ -134,30 +135,22 @@ static inline bool PromiseModule_LogJson(JsonElement *object, const Promise *pp)
     const LogLevel level = LogLevelFromString(level_string);
     assert(level != LOG_LEVEL_NOTHING);
 
-    if (pp != NULL)
+    /* Check if there is a log level specified for the particular promise. */
+    if ((pp != NULL) && (promise_log_level != NULL))
     {
-        /* Check if there is a log level specified for the particular promise. */
-        const char *value = PromiseGetConstraintAsRval(pp, "log_level", RVAL_TYPE_SCALAR);
-        if (value != NULL)
+        LogLevel specific = ActionAttributeLogLevelFromString(promise_log_level);
+        if (specific < level)
         {
-            LogLevel specific = ActionAttributeLogLevelFromString(value);
-            if (specific < level)
-            {
-                /* Do not log messages that have a higher log level than the log
-                 * level specified for the promise (e.g. 'info' messages when
-                 * 'error' was requested for the promise). */
-                return false;
-            }
+            /* Do not log messages that have a higher log level than the log
+             * level specified for the promise (e.g. 'info' messages when
+             * 'error' was requested for the promise). */
+            return level;
         }
     }
 
     Log(level, "%s", message);
 
-    // We want to keep track of whether the module logged an error,
-    // it must log errors for not kept promises and validation errors.
-    const bool logged_error =
-        (level == LOG_LEVEL_ERR || level == LOG_LEVEL_CRIT);
-    return logged_error;
+    return level;
 }
 
 static inline JsonElement *PromiseModule_ParseResultClasses(char *value)
@@ -175,7 +168,8 @@ static inline JsonElement *PromiseModule_ParseResultClasses(char *value)
     return result_classes;
 }
 
-static JsonElement *PromiseModule_Receive(PromiseModule *module, const Promise *pp)
+static JsonElement *PromiseModule_Receive(PromiseModule *module, const Promise *pp,
+                                          uint16_t n_log_msgs[LOG_LEVEL_DEBUG + 1])
 {
     assert(module != NULL);
 
@@ -192,7 +186,11 @@ static JsonElement *PromiseModule_Receive(PromiseModule *module, const Promise *
         response = JsonObjectCreate(10);
     }
 
-    bool logged_error = false;
+    const char *promise_log_level = NULL;
+    if (pp != NULL)
+    {
+        promise_log_level = PromiseGetConstraintAsRval(pp, "log_level", RVAL_TYPE_SCALAR);
+    }
 
     ssize_t bytes;
     while (!empty_line
@@ -238,7 +236,11 @@ static JsonElement *PromiseModule_Receive(PromiseModule *module, const Promise *
             JsonElement *log_message = JsonObjectCreate(2);
             JsonObjectAppendString(log_message, "level", level);
             JsonObjectAppendString(log_message, "message", message);
-            logged_error |= PromiseModule_LogJson(log_message, pp);
+            LogLevel log_level = PromiseModule_LogJson(log_message, pp, promise_log_level);
+            if (log_level > LOG_LEVEL_NOTHING)
+            {
+                n_log_msgs[log_level]++;
+            }
             JsonArrayAppendObject(log_array, log_message);
 
             free(level);
@@ -322,8 +324,12 @@ static JsonElement *PromiseModule_Receive(PromiseModule *module, const Promise *
             size_t length = JsonLength(json_log_messages);
             for (size_t i = 0; i < length; ++i)
             {
-                logged_error |= PromiseModule_LogJson(
-                    JsonArrayGet(json_log_messages, i), pp);
+                LogLevel log_level = PromiseModule_LogJson(JsonArrayGet(json_log_messages, i),
+                                                           pp, promise_log_level);
+                if (log_level > LOG_LEVEL_NOTHING)
+                {
+                    n_log_msgs[log_level]++;
+                }
             }
         }
 
@@ -354,7 +360,6 @@ static JsonElement *PromiseModule_Receive(PromiseModule *module, const Promise *
     JsonDestroy(log_array);
 
     assert(response != NULL);
-    JsonObjectAppendBool(response, "_logged_error", logged_error);
     return response;
 }
 
@@ -366,7 +371,7 @@ static void PromiseModule_SendMessage(PromiseModule *module, Seq *message)
     for (size_t i = 0; i < length; ++i)
     {
         const char *line = SeqAt(message, i);
-        const size_t line_length = strlen(line);
+        NDEBUG_UNUSED const size_t line_length = strlen(line);
         assert(line_length > 0 && memchr(line, '\n', line_length) == NULL);
         fprintf(module->input, "%s\n", line);
     }
@@ -489,6 +494,21 @@ static PromiseModule *PromiseModule_Start(char *interpreter, char *path)
     module->input = module->fds.write_stream;
     module->message = NULL;
 
+    if (!PipeToPid(&module->pid, module->fds.write_stream))
+    {
+        Log(LOG_LEVEL_ERR, "Failed to get PID of custom promise module '%s'", path);
+        PromiseModule_DestroyInternal(module);
+        return NULL;
+    }
+
+    module->process_start_time = GetProcessStartTime(module->pid);
+    if (module->process_start_time == PROCESS_START_TIME_UNKNOWN)
+    {
+        Log(LOG_LEVEL_ERR, "Failed to get process start time of custom promise module '%s'", path);
+        PromiseModule_DestroyInternal(module);
+        return NULL;
+    }
+
     fprintf(module->input, "cf-agent %s v1\n\n", Version());
     fflush(module->input);
 
@@ -506,22 +526,54 @@ static PromiseModule *PromiseModule_Start(char *interpreter, char *path)
         return NULL;
     }
 
-    assert(SeqLength(header) >= 3);
-    Seq *flags = SeqSplit(header, 3);
-    const size_t flags_length = SeqLength(flags);
-    for (size_t i = 0; i < flags_length; ++i)
+    /* line_based is the default, but the module should specify it
+     * explicitly. */
+    module->json = false;
+    bool protocol_specified = false;
+
+    const size_t header_length = SeqLength(header);
+    const size_t flags_offset = 3;        /* where flags start */
+    assert(header_length > flags_offset); /* at least one flag required -- json_based/line_based */
+    for (size_t i = flags_offset; i < header_length; ++i)
     {
-        const char *const flag = SeqAt(flags, i);
+        const char *const flag = SeqAt(header, i);
         if (StringEqual(flag, "json_based"))
         {
             module->json = true;
+            if (protocol_specified)
+            {
+                Log(LOG_LEVEL_WARNING,
+                    "Ambiguous protocol specification from the custom promise module '%s'."
+                    " Please report this as a bug in the module",
+                    module->path);
+            }
+            protocol_specified = true;
         }
         else if (StringEqual(flag, "line_based"))
         {
             module->json = false;
+            if (protocol_specified)
+            {
+                Log(LOG_LEVEL_WARNING,
+                    "Ambiguous protocol specification from the custom promise module '%s'."
+                    " Please report this as a bug in the module",
+                    module->path);
+            }
+            protocol_specified = true;
+        }
+        else if (StringEqual(flag, "action_policy"))
+        {
+            module->action_policy = true;
         }
     }
-    SeqDestroy(flags);
+
+    if (!protocol_specified)
+    {
+        Log(LOG_LEVEL_WARNING,
+            "Custom promise module '%s' didn't fully specify protocol."
+            " Using 'line_based' as the default. Please report this as a bug in the module",
+            module->path);
+    }
 
     SeqDestroy(header);
 
@@ -655,6 +707,11 @@ static void PromiseModule_AppendAllAttributes(
     assert(module != NULL);
     assert(pp != NULL);
 
+    /* Need to make sure action_policy is "warn" in case of dry-run/simulate
+     * modes. */
+    const bool dontdo = (EVAL_MODE != EVAL_MODE_NORMAL);
+    bool seen_action_policy = false;
+
     const size_t attributes = SeqLength(pp->conlist);
     for (size_t i = 0; i < attributes; i++)
     {
@@ -666,9 +723,17 @@ static void PromiseModule_AppendAllAttributes(
             || StringEqual(name, "ifvarclass")
             || StringEqual(name, "unless")
             || StringEqual(name, "depends_on")
-            || StringEqual(name, "with"))
+            || StringEqual(name, "with")
+            || StringEqual(name, "meta")
+            || StringEqual(name, "expireafter"))
         {
             // Evaluated by agent and not sent to module, skip
+            continue;
+        }
+
+        if (StringEqual(name, "action") || StringEqual(name, "action_name"))
+        {
+            /* We only pass "action_policy" to the module (see below). */
             continue;
         }
 
@@ -679,7 +744,13 @@ static void PromiseModule_AppendAllAttributes(
         }
 
         JsonElement *value = NULL;
-        if (attribute->rval.type == RVAL_TYPE_SCALAR)
+        if (dontdo && StringEqual(name, "action_policy"))
+        {
+            /* Override the value in case of dry-run/simulate modes. */
+            seen_action_policy = true;
+            value = JsonStringCreate("warn");
+        }
+        else if (attribute->rval.type == RVAL_TYPE_SCALAR)
         {
             /* Could be a '@(container)' reference. */
             if (!TryToGetContainerFromScalarRef(ctx, RvalScalarValue(attribute->rval), &value))
@@ -689,8 +760,8 @@ static void PromiseModule_AppendAllAttributes(
                 value = RvalToJson(attribute->rval);
             }
         }
-        if ((attribute->rval.type == RVAL_TYPE_LIST) ||
-            (attribute->rval.type == RVAL_TYPE_CONTAINER))
+        else if ((attribute->rval.type == RVAL_TYPE_LIST) ||
+                 (attribute->rval.type == RVAL_TYPE_CONTAINER))
         {
             value = RvalToJson(attribute->rval);
         }
@@ -705,6 +776,14 @@ static void PromiseModule_AppendAllAttributes(
                 "Unsupported type of the '%s' attribute (%c), cannot be sent to custom promise module",
                 name, attribute->rval.type);
         }
+
+        seen_action_policy = (seen_action_policy || StringEqual(name, "action_policy"));
+    }
+
+    if (dontdo && !seen_action_policy)
+    {
+        /* Make sure action_policy is specified in case of dry-run/simulate modes. */
+        PromiseModule_AppendAttribute(module, "action_policy", JsonStringCreate("warn"));
     }
 }
 
@@ -746,7 +825,8 @@ static inline bool CustomPromise_IsFullyResolved(const EvalContext *ctx, const P
     for (size_t i = 0; i < attributes; i++)
     {
         const Constraint *attribute = SeqAt(pp->conlist, i);
-        if (IsClassesBodyConstraint(attribute->lval))
+        if (IsClassesBodyConstraint(attribute->lval) ||
+            StringEqual(attribute->lval, "meta"))
         {
             /* Not passed to the modules, handled on the agent side. */
             continue;
@@ -842,6 +922,17 @@ static bool PromiseModule_Validate(PromiseModule *module, const EvalContext *ctx
     const char *const promise_type = PromiseGetPromiseType(pp);
     const char *const promiser = pp->promiser;
 
+    const char *action_policy = PromiseGetConstraintAsRval(pp, "action_policy", RVAL_TYPE_SCALAR);
+    const bool dontdo = ((EVAL_MODE != EVAL_MODE_NORMAL) ||
+                         StringEqual(action_policy, "warn") || StringEqual(action_policy, "nop"));
+    if (dontdo && !module->action_policy)
+    {
+        Log(LOG_LEVEL_ERR,
+            "Not making changes to the system, but the custom promise module '%s' doesn't support action_policy",
+            module->path);
+        return false;
+    }
+
     PromiseModule_AppendString(module, "operation", "validate_promise");
     PromiseModule_AppendString(module, "log_level", LogLevelToRequestFromModule(pp));
     PromiseModule_AppendString(module, "promise_type", promise_type);
@@ -852,7 +943,8 @@ static bool PromiseModule_Validate(PromiseModule *module, const EvalContext *ctx
     PromiseModule_Send(module);
 
     // Prints errors / log messages from module:
-    JsonElement *response = PromiseModule_Receive(module, pp);
+    uint16_t n_log_msgs[LOG_LEVEL_DEBUG + 1] = {0};
+    JsonElement *response = PromiseModule_Receive(module, pp, n_log_msgs);
 
     if (response == NULL)
     {
@@ -860,9 +952,6 @@ static bool PromiseModule_Validate(PromiseModule *module, const EvalContext *ctx
         return false;
     }
 
-    // TODO: const bool logged_error = JsonObjectGetAsBool(response, "_logged_error");
-    const bool logged_error = JsonPrimitiveGetAsBool(
-        JsonObjectGet(response, "_logged_error"));
     const bool valid = HasResultAndResultIsValid(response);
 
     JsonDestroy(response);
@@ -880,7 +969,7 @@ static bool PromiseModule_Validate(PromiseModule *module, const EvalContext *ctx
             filename,
             line);
 
-        if (!logged_error)
+        if ((n_log_msgs[LOG_LEVEL_ERR] == 0) && (n_log_msgs[LOG_LEVEL_CRIT] == 0))
         {
             Log(LOG_LEVEL_CRIT,
                 "Bug in promise module - No error(s) logged for invalid %s promise with promiser '%s' (%s:%zu)",
@@ -914,7 +1003,12 @@ static PromiseResult PromiseModule_Evaluate(
     PromiseModule_AppendAllAttributes(module, ctx, pp);
     PromiseModule_Send(module);
 
-    JsonElement *response = PromiseModule_Receive(module, pp);
+    const char *action_policy = PromiseGetConstraintAsRval(pp, "action_policy", RVAL_TYPE_SCALAR);
+    const bool dontdo = ((EVAL_MODE != EVAL_MODE_NORMAL) ||
+                         StringEqual(action_policy, "warn") || StringEqual(action_policy, "nop"));
+
+    uint16_t n_log_msgs[LOG_LEVEL_DEBUG + 1] = {0};
+    JsonElement *response = PromiseModule_Receive(module, pp, n_log_msgs);
     if (response == NULL)
     {
         // Log from PromiseModule_Receive
@@ -935,12 +1029,23 @@ static PromiseResult PromiseModule_Evaluate(
 
     PromiseResult result;
     const char *const result_str = JsonObjectGetAsString(response, "result");
-    // TODO: const bool logged_error = JsonObjectGetAsBool(response, "_logged_error");
-    const bool logged_error = JsonPrimitiveGetAsBool(
-        JsonObjectGet(response, "_logged_error"));
 
     /* Attributes needed for setting outcome classes etc. */
     Attributes a = GetClassContextAttributes(ctx, pp);
+
+    const char *const filename = pp->parent_section->parent_bundle->source_path;
+    const size_t line = pp->offset.line;
+
+    if (dontdo && (n_log_msgs[LOG_LEVEL_INFO] > 0))
+    {
+        Log(LOG_LEVEL_CRIT,
+            "Bug in promise module - 'info:' log messages reported for %s promise with promiser '%s' (%s:%zu)"
+            " while making changes on the system disabled",
+            promise_type,
+            promiser,
+            filename,
+            line);
+    }
 
     if (result_str == NULL)
     {
@@ -981,13 +1086,22 @@ static PromiseResult PromiseModule_Evaluate(
             "Promise with promiser '%s' was not kept by promise module '%s'",
             promiser,
             module->path);
-        if (!logged_error)
+
+        if (!dontdo && (n_log_msgs[LOG_LEVEL_ERR] == 0) && (n_log_msgs[LOG_LEVEL_CRIT] == 0))
         {
-            const char *const filename =
-                pp->parent_section->parent_bundle->source_path;
-            const size_t line = pp->offset.line;
             Log(LOG_LEVEL_CRIT,
                 "Bug in promise module - Failed to log errors for not kept %s promise with promiser '%s' (%s:%zu)",
+                promise_type,
+                promiser,
+                filename,
+                line);
+        }
+        else if (dontdo &&
+                 ((n_log_msgs[LOG_LEVEL_WARNING] + n_log_msgs[LOG_LEVEL_ERR] + n_log_msgs[LOG_LEVEL_CRIT]) == 0))
+        {
+            Log(LOG_LEVEL_CRIT,
+                "Bug in promise module - Failed to log warnings for not kept %s promise with promiser '%s' (%s:%zu)"
+                " while making changes on the system disabled",
                 promise_type,
                 promiser,
                 filename,
@@ -1006,6 +1120,27 @@ static PromiseResult PromiseModule_Evaluate(
             "Promise with promiser '%s' was repaired by promise module '%s'",
             promiser,
             module->path);
+
+        if (dontdo)
+        {
+            Log(LOG_LEVEL_CRIT,
+                "Bug in promise module - %s promise with promiser '%s' (%s:%zu)"
+                " repaired while making changes on the system disabled",
+                promise_type,
+                promiser,
+                filename,
+                line);
+        }
+
+        if (n_log_msgs[LOG_LEVEL_INFO] == 0)
+        {
+            Log(LOG_LEVEL_CRIT,
+                "Bug in promise module - Failed to log about changes made by a repaired %s promise with promiser '%s' (%s:%zu)",
+                promise_type,
+                promiser,
+                filename,
+                line);
+        }
     }
     else if (StringEqual(result_str, "error"))
     {
@@ -1048,7 +1183,8 @@ static void PromiseModule_Terminate(PromiseModule *module, const Promise *pp)
         PromiseModule_AppendString(module, "operation", "terminate");
         PromiseModule_Send(module);
 
-        JsonElement *response = PromiseModule_Receive(module, pp);
+        uint16_t n_log_msgs[LOG_LEVEL_DEBUG + 1] = {0};
+        JsonElement *response = PromiseModule_Receive(module, pp, n_log_msgs);
         JsonDestroy(response);
 
         PromiseModule_DestroyInternal(module);
@@ -1059,6 +1195,22 @@ static void PromiseModule_Terminate_untyped(void *data)
 {
     PromiseModule *module = data;
     PromiseModule_Terminate(module, NULL);
+}
+
+void TerminateCustomPromises(void)
+{
+    MapIterator iter = MapIteratorInit(custom_modules);
+
+    for (const MapKeyValue *item = MapIteratorNext(&iter); item != NULL; item = MapIteratorNext(&iter))
+    {
+        const char *const path = item->key;
+        const PromiseModule *const module = item->value;
+
+        if (!GracefulTerminate(module->pid, module->process_start_time))
+        {
+            Log(LOG_LEVEL_ERR, "Failed to terminate custom promise module '%s'", path);
+        }
+    }
 }
 
 bool InitializeCustomPromises()
@@ -1163,7 +1315,7 @@ PromiseResult EvaluateCustomPromise(EvalContext *ctx, const Promise *pp)
 
     CfLock promise_lock = AcquireLock(ctx, custom_promise_id, VUQNAME, CFSTARTTIME,
                                       a.transaction.ifelapsed, a.transaction.expireafter,
-                                      pp, true);
+                                      pp, false);
     if (promise_lock.lock == NULL)
     {
         return PROMISE_RESULT_SKIPPED;

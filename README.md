@@ -1,7 +1,5 @@
 [![Gitter chat](https://badges.gitter.im/cfengine/core.png)](https://gitter.im/cfengine/core)
 
-[![Language grade: C](https://img.shields.io/lgtm/grade/cpp/g/cfengine/core.svg?logo=lgtm&logoWidth=18&label=code%20quality)](https://lgtm.com/projects/g/cfengine/core/)
-
 # CFEngine 3
 
 CFEngine 3 is a popular open source configuration management system. Its primary
@@ -14,7 +12,7 @@ CFEngine is comprised of several source code repositories.
 As you might be looking for another part of the open source code base, here is a list to ease navigation:
 
 * [core](https://github.com/cfengine/core) (This repo) - The C source code for core components, like cf-agent and cf-serverd.
-  * [libntech](https://github.com/cfengine/libntech) (submodule in core) - Library of reusable C code, such as data structures, string manipulation, JSON parsing, file handling, etc.
+  * [libntech](https://github.com/NorthernTechHQ/libntech) (submodule in core) - Library of reusable C code, such as data structures, string manipulation, JSON parsing, file handling, etc.
   * [core/contrib](https://github.com/cfengine/core/tree/master/contrib) (subdirectory in core) - User-contributed tools and scripts
 * [masterfiles](https://github.com/cfengine/masterfiles) - The Masterfiles Policy Framework (MPF) contains the default policy (.cf) files
 * [documentation](https://github.com/cfengine/documentation) - Documentation on how CFEngine components work, the policy language, the enterprise features, etc.
@@ -44,26 +42,40 @@ stated otherwise in the copyright notice inside the particular file.
 
 ## Example Usage
 
+In order to use the built cf-agent in the source tree you must add a `$HOME/.cfagent/bin/cf-promises` file:
+
+```bash
+$ pwd
+<something>/core
+$ echo "cd $(pwd); cf-promises/cf-promises \"\$@\"" > ~/.cfagent/bin/cf-promises
+```
+
 ### Hello World
 
 The following code demonstrates simple CFEngine output through a reports promise.
 
-    body common control
-    {
-      bundlesequence => { "run" };
-    }
-
-    bundle agent run
-    {
-      reports:
-        cfengine::
-          "Hello, world";
-    }
+```cfengine3
+bundle agent main
+{
+  reports:
+    "Hello, world";
+}
+```
 
 The following policy code may be executed with cf-agent (the main CFEngine binary) as follows.
 
-    $ cf-agent/cf-agent hello.cf
-    R: Hello, world
+```bash
+$ cf-agent/cf-agent ./hello.cf
+R: Hello, world
+```
+
+## Debugging
+
+As this project uses autotools you must use libtool to run gdb/lldb/debuggers:
+
+```bash
+./libtool --mode=execute <gdb|lldb|yourdebugger> ./cf-agent/cf-agent
+```
 
 ## Contributing
 

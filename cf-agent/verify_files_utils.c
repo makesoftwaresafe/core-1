@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -341,8 +341,8 @@ static PromiseResult CfCopyFile(EvalContext *ctx, char *sourcefile,
     else
     {
         bool dir_created = false;
-        if (!MakeParentDirectoryForPromise(ctx, pp, &attr, &result,
-                                           destfile, true, &dir_created))
+        if (!MakeParentDirectoryForPromise(ctx, pp, &attr, &result, destfile,
+                                           true, &dir_created, DEFAULTMODE))
         {
             return result;
         }
@@ -757,8 +757,9 @@ static PromiseResult SourceSearchAndCopy(EvalContext *ctx, const char *from, cha
     struct stat tostat;
 
     bool dir_created = false;
-    if (!MakeParentDirectoryForPromise(ctx, pp, attr, &result,
-                                       newto, attr->move_obstructions, &dir_created))
+    if (!MakeParentDirectoryForPromise(ctx, pp, attr, &result, newto,
+                                       attr->move_obstructions, &dir_created,
+                                       DEFAULTMODE))
     {
         return result;
     }
@@ -1550,8 +1551,8 @@ bool CopyRegularFile(EvalContext *ctx, const char *source, const char *dest, con
             return false;
         }
 
-        if (!CopyRegularFileNet(source, ToChangesPath(new),
-                                sstat->st_size, attr->copy.encrypt, conn))
+        if (!CopyRegularFileNet(source, dest, ToChangesPath(new),
+                                sstat->st_size, attr->copy.encrypt, conn, sstat->st_mode))
         {
             RecordFailure(ctx, pp, attr, "Failed to copy file '%s' from '%s'",
                           source, conn->remoteip);
@@ -1711,7 +1712,7 @@ bool CopyRegularFile(EvalContext *ctx, const char *source, const char *dest, con
                 }
             }
 
-            if (rename(dest, changes_backup) == 0)
+            if (CopyRegularFileDisk(dest, changes_backup))
             {
                 RecordChange(ctx, pp, attr, "Backed up '%s' as '%s'", dest, backup);
                 *result = PromiseResultUpdate(*result, PROMISE_RESULT_CHANGE);
@@ -2147,7 +2148,7 @@ static PromiseResult VerifyName(EvalContext *ctx, char *path, const struct stat 
         }
         else
         {
-            strncpy(newname, path, sizeof(newname));
+            strncpy(newname, path, sizeof(newname) - 1);
             ChopLastNode(newname);
 
             if (!PathAppend(newname, sizeof(newname),
@@ -2497,6 +2498,40 @@ static PromiseResult TouchFile(EvalContext *ctx, char *path, const Attributes *a
     return result;
 }
 
+static inline char *GetFileTypeDescription(const struct stat *const stat_buf,
+                                           const char *const filename)
+{
+    /* Use lstat to check if this is a symlink, and don't worry about race
+     * conditions as the returned string is only used for a log message. */
+    struct stat sb;
+    const bool is_link = (lstat(filename, &sb) == 0 && S_ISLNK(sb.st_mode));
+
+    switch (stat_buf->st_mode & S_IFMT)
+    {
+        case S_IFREG:
+            return (is_link) ? "Symbolic link to regular file"
+                             : "Regular file";
+        case S_IFDIR:
+            return (is_link) ? "Symbolic link to directory"
+                             : "Directory";
+        case S_IFSOCK:
+            return (is_link) ? "Symbolic link to socket"
+                             : "Socket";
+        case S_IFIFO:
+            return (is_link) ? "Symbolic link to named pipe"
+                             : "Named pipe";
+        case S_IFBLK:
+            return (is_link) ? "Symbolic link to block device"
+                             : "Block device";
+        case S_IFCHR:
+            return (is_link) ? "Symbolic link to character device"
+                             : "Character device";
+        default:
+            return (is_link) ? "Symbolic link to object"
+                             : "Object";
+    }
+}
+
 static PromiseResult VerifyFileAttributes(EvalContext *ctx, const char *file, const struct stat *dstat, const Attributes *attr, const Promise *pp)
 {
     PromiseResult result = PROMISE_RESULT_NOOP;
@@ -2617,8 +2652,11 @@ static PromiseResult VerifyFileAttributes(EvalContext *ctx, const char *file, co
             }
             else
             {
-                RecordChange(ctx, pp, attr, "Object '%s' had permissions %04jo, changed it to %04jo",
-                             file, (uintmax_t)dstat->st_mode & 07777, (uintmax_t)newperm & 07777);
+                const char *const object = GetFileTypeDescription(dstat, file);
+                RecordChange(ctx, pp, attr,
+                             "%s '%s' had permissions %04jo, changed it to %04jo",
+                             object, file, (uintmax_t)dstat->st_mode & 07777,
+                             (uintmax_t)newperm & 07777);
                 result = PromiseResultUpdate(result, PROMISE_RESULT_CHANGE);
             }
         }
@@ -3154,8 +3192,9 @@ static PromiseResult CopyFileSources(EvalContext *ctx, char *destination, const 
 
     PromiseResult result = PROMISE_RESULT_NOOP;
     bool dir_created = false;
-    if (!MakeParentDirectoryForPromise(ctx, pp, attr, &result,
-                                       vbuff, attr->move_obstructions, &dir_created))
+    if (!MakeParentDirectoryForPromise(ctx, pp, attr, &result, vbuff,
+                                       attr->move_obstructions, &dir_created,
+                                       DEFAULTMODE))
     {
         BufferDestroy(source_buf);
         return result;
@@ -4339,15 +4378,30 @@ bool CfCreateFile(EvalContext *ctx, char *file, const Promise *pp, const Attribu
 
         if (MakingChanges(ctx, pp, attr, result, "create directory '%s'", file))
         {
+            mode_t filemode = DEFAULTMODE;
+            if (PromiseGetConstraintAsRval(pp, "mode", RVAL_TYPE_SCALAR) == NULL)
+            {
+                Log(LOG_LEVEL_VERBOSE,
+                    "No mode was set, choosing directory default %04jo",
+                    (uintmax_t) filemode);
+            }
+            else
+            {
+                filemode = attr->perms.plus & ~(attr->perms.minus);
+            }
+
             bool dir_created = false;
-            if (!MakeParentDirectoryForPromise(ctx, pp, attr, result,
-                                               file, attr->move_obstructions, &dir_created))
+            if (!MakeParentDirectoryForPromise(ctx, pp, attr, result, file,
+                                               attr->move_obstructions,
+                                               &dir_created, filemode))
             {
                 return false;
             }
             if (dir_created)
             {
-                RecordChange(ctx, pp, attr, "Created directory '%s'", file);
+                RecordChange(ctx, pp, attr,
+                             "Created directory '%s', mode %04jo", file,
+                             (uintmax_t) filemode);
                 *result = PromiseResultUpdate(*result, PROMISE_RESULT_CHANGE);
             }
         }
@@ -4370,8 +4424,9 @@ bool CfCreateFile(EvalContext *ctx, char *file, const Promise *pp, const Attribu
         }
 
         bool dir_created = false;
-        if (!MakeParentDirectoryForPromise(ctx, pp, attr, result,
-                                           file, attr->move_obstructions, &dir_created))
+        if (!MakeParentDirectoryForPromise(ctx, pp, attr, result, file,
+                                           attr->move_obstructions,
+                                           &dir_created, DEFAULTMODE))
         {
             return false;
         }
@@ -4423,8 +4478,9 @@ bool CfCreateFile(EvalContext *ctx, char *file, const Promise *pp, const Attribu
         }
 
         bool dir_created = false;
-        if (!MakeParentDirectoryForPromise(ctx, pp, attr, result,
-                                           file, attr->move_obstructions, &dir_created))
+        if (!MakeParentDirectoryForPromise(ctx, pp, attr, result, file,
+                                           attr->move_obstructions,
+                                           &dir_created, DEFAULTMODE))
         {
             return false;
         }

@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -21,6 +21,9 @@
   (COSL) may apply to this file if you as a licensee so wish it. See
   included file COSL.txt.
 */
+
+#include <platform.h>
+#include <getopt.h>
 
 #include <generic_agent.h>
 #include <mon.h>
@@ -72,6 +75,13 @@ static const char *const CF_MONITORD_MANPAGE_LONG_DESCRIPTION =
     "cf-monitord is the monitoring daemon for CFEngine. It samples probes defined in policy code and attempts to learn the "
     "normal system state based on current and past observations. Current estimates are made available as "
     "special variables (e.g. $(mon.av_cpu)) to cf-agent, which may use them to inform policy decisions.";
+
+static const Component COMPONENT =
+{
+    .name = "cf-monitord",
+    .website = CF_WEBSITE,
+    .copyright = CF_COPYRIGHT
+};
 
 static const struct option OPTIONS[] =
 {
@@ -207,7 +217,7 @@ static GenericAgentConfig *CheckOpts(int argc, char **argv)
         case 'h':
         {
             Writer *w = FileWriter(stdout);
-            WriterWriteHelp(w, "cf-monitord", OPTIONS, HINTS, NULL, false, true);
+            WriterWriteHelp(w, &COMPONENT, OPTIONS, HINTS, NULL, false, true);
             FileWriterDetach(w);
         }
         DoCleanupAndExit(EXIT_SUCCESS);
@@ -254,7 +264,7 @@ static GenericAgentConfig *CheckOpts(int argc, char **argv)
         default:
         {
             Writer *w = FileWriter(stdout);
-            WriterWriteHelp(w, "cf-monitord", OPTIONS, HINTS, NULL, false, true);
+            WriterWriteHelp(w, &COMPONENT, OPTIONS, HINTS, NULL, false, true);
             FileWriterDetach(w);
         }
         DoCleanupAndExit(EXIT_FAILURE);
@@ -298,17 +308,26 @@ static void KeepPromises(EvalContext *ctx, const Policy *policy)
             if (strcmp(cp->lval, CFM_CONTROLBODY[MONITOR_CONTROL_HISTOGRAMS].lval) == 0)
             {
                 /* Keep accepting this option for backward compatibility. */
+                continue;
             }
 
             if (strcmp(cp->lval, CFM_CONTROLBODY[MONITOR_CONTROL_TCP_DUMP].lval) == 0)
             {
                 MonNetworkSnifferEnable(BooleanFromString(value));
+                continue;
             }
 
             if (strcmp(cp->lval, CFM_CONTROLBODY[MONITOR_CONTROL_FORGET_RATE].lval) == 0)
             {
                 sscanf(value, "%lf", &FORGETRATE);
                 Log(LOG_LEVEL_DEBUG, "forget rate %f", FORGETRATE);
+                continue;
+            }
+
+            if (StringEqual(cp->lval, CFM_CONTROLBODY[MONITOR_CONTROL_MONITOR_FACILITY].lval))
+            {
+                SetFacility(value);
+                continue;
             }
         }
     }

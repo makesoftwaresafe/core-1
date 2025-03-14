@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -53,6 +53,8 @@ DBPriv *DBPrivOpenDB(const char *dbpath, dbid id);
 void DBPrivCloseDB(DBPriv *hdbp);
 void DBPrivCommit(DBPriv *hdbp);
 bool DBPrivClean(DBPriv *hdbp);
+
+int DBPrivGetDBUsagePercentage(const char *db_path);
 
 bool DBPrivHasKey(DBPriv *db, const void *key, int key_size);
 int DBPrivGetValueSize(DBPriv *db, const void *key, int key_size);

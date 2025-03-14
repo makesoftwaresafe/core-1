@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -22,11 +22,13 @@
   included file COSL.txt.
 */
 
+#include <platform.h>
 #include <evalfunction.h>
 
 #include <policy_server.h>
 #include <promises.h>
 #include <dir.h>
+#include <file_lib.h>
 #include <dbm_api.h>
 #include <lastseen.h>
 #include <files_copy.h>
@@ -72,6 +74,8 @@
 #include <string_sequence.h>
 #include <string_lib.h>
 #include <version_comparison.h>
+#include <mutex.h>          /* ThreadWait */
+#include <glob_lib.h>
 
 #include <math_eval.h>
 
@@ -1329,6 +1333,7 @@ static FnCallResult FnCallIfElse(EvalContext *ctx,
 
 static FnCallResult FnCallClassesMatching(EvalContext *ctx, ARG_UNUSED const Policy *policy, const FnCall *fp, const Rlist *finalargs)
 {
+    assert(finalargs != NULL);
     bool count_only = false;
     bool check_only = false;
     unsigned count = 0;
@@ -1367,8 +1372,7 @@ static FnCallResult FnCallClassesMatching(EvalContext *ctx, ARG_UNUSED const Pol
     Rlist *matches = NULL;
 
     {
-        ClassTableIterator *iter = EvalContextClassTableIteratorNewGlobal(ctx, NULL, true, true);
-        StringSet *global_matches = ClassesMatching(ctx, iter, RlistScalarValue(finalargs), finalargs->next, check_only);
+        StringSet *global_matches = ClassesMatchingGlobal(ctx, RlistScalarValue(finalargs), finalargs->next, check_only);
 
         StringSetIterator it = StringSetIteratorInit(global_matches);
         const char *element = NULL;
@@ -1385,7 +1389,6 @@ static FnCallResult FnCallClassesMatching(EvalContext *ctx, ARG_UNUSED const Pol
         }
 
         StringSetDestroy(global_matches);
-        ClassTableIteratorDestroy(iter);
     }
 
     if (check_only && count >= 1)
@@ -1394,8 +1397,7 @@ static FnCallResult FnCallClassesMatching(EvalContext *ctx, ARG_UNUSED const Pol
     }
 
     {
-        ClassTableIterator *iter = EvalContextClassTableIteratorNewLocal(ctx);
-        StringSet *local_matches = ClassesMatching(ctx, iter, RlistScalarValue(finalargs), finalargs->next, check_only);
+        StringSet *local_matches = ClassesMatchingLocal(ctx, RlistScalarValue(finalargs), finalargs->next, check_only);
 
         StringSetIterator it = StringSetIteratorInit(local_matches);
         const char *element = NULL;
@@ -1412,7 +1414,6 @@ static FnCallResult FnCallClassesMatching(EvalContext *ctx, ARG_UNUSED const Pol
         }
 
         StringSetDestroy(local_matches);
-        ClassTableIteratorDestroy(iter);
     }
 
     if (check_only)
@@ -1434,7 +1435,7 @@ static JsonElement *VariablesMatching(const EvalContext *ctx, const FnCall *fp, 
     JsonElement *matching = JsonObjectCreate(10);
 
     const char *regex = RlistScalarValue(args);
-    pcre *rx = CompileRegex(regex);
+    Regex *rx = CompileRegex(regex);
 
     Variable *v = NULL;
     while ((v = VariableTableIteratorNext(iter)))
@@ -1508,7 +1509,7 @@ static JsonElement *VariablesMatching(const EvalContext *ctx, const FnCall *fp, 
 
     if (rx)
     {
-        pcre_free(rx);
+        RegexDestroy(rx);
     }
 
     return matching;
@@ -1562,9 +1563,48 @@ static FnCallResult FnCallVariablesMatching(EvalContext *ctx, ARG_UNUSED const P
 }
 
 /*********************************************************************/
-
-static FnCallResult FnCallGetMetaTags(EvalContext *ctx, ARG_UNUSED const Policy *policy, const FnCall *fp, const Rlist *finalargs)
+static Bundle *GetBundleFromPolicy(const Policy *policy, const char *namespace, const char *bundlename)
 {
+    assert(policy != NULL);
+    const size_t bundles_length = SeqLength(policy->bundles);
+
+    for (size_t i = 0; i < bundles_length; i++)
+    {
+        Bundle *bp = SeqAt(policy->bundles, i);
+        if (StringEqual(bp->name, bundlename) && StringEqual(bp->ns, namespace))
+        {
+            return bp;
+        }
+    }
+    return NULL;
+}
+
+static Promise *GetPromiseFromBundle(const Bundle *bundle, const char *promise_type, const char *promiser)
+{
+    assert(bundle != NULL);
+    const size_t sections_length = SeqLength(bundle->sections);
+    for (size_t i = 0; i < sections_length; i++)
+    {
+        BundleSection *bsection = SeqAt(bundle->sections, i);
+        if (StringEqual(bsection->promise_type, promise_type))
+        {
+            const size_t promises_length = SeqLength(bsection->promises);
+            for (size_t i = 0; i < promises_length; i++)
+            {
+                Promise *promise = SeqAt(bsection->promises, i);
+                if (StringEqual(promise->promiser, promiser))
+                {
+                    return promise;
+                }
+            }
+        }
+    }
+    return NULL;
+}
+
+static FnCallResult FnCallGetMetaTags(EvalContext *ctx, const Policy *policy, const FnCall *fp, const Rlist *finalargs)
+{
+    assert(fp != NULL);
     if (!finalargs)
     {
         FatalError(ctx, "Function '%s' requires at least one argument", fp->name);
@@ -1573,17 +1613,62 @@ static FnCallResult FnCallGetMetaTags(EvalContext *ctx, ARG_UNUSED const Policy 
     Rlist *tags = NULL;
     StringSet *tagset = NULL;
 
-    if (strcmp(fp->name, "getvariablemetatags") == 0)
+    if (StringEqual(fp->name, "getvariablemetatags"))
     {
         VarRef *ref = VarRefParse(RlistScalarValue(finalargs));
         tagset = EvalContextVariableTags(ctx, ref);
         VarRefDestroy(ref);
     }
-    else if (strcmp(fp->name, "getclassmetatags") == 0)
+    else if (StringEqual(fp->name, "getclassmetatags"))
     {
         ClassRef ref = ClassRefParse(RlistScalarValue(finalargs));
         tagset = EvalContextClassTags(ctx, ref.ns, ref.name);
         ClassRefDestroy(ref);
+    }
+    else if (StringEqual(fp->name, "getbundlemetatags"))
+    {
+        const char *bundleref = RlistScalarValue(finalargs);
+        assert(bundleref != NULL);
+        const Rlist *args = RlistFromSplitString(bundleref, ':');
+        const char *namespace = (args->next == NULL) ? "default" : RlistScalarValue(args);
+        const char *name = RlistScalarValue((args->next == NULL) ? args : args->next);
+
+        const Bundle *bundle = GetBundleFromPolicy(policy, namespace, name);
+        if (bundle == NULL)
+        {
+            Log(LOG_LEVEL_ERR,
+                "Function %s couldn't find bundle '%s' with namespace '%s'",
+                fp->name,
+                name,
+                namespace);
+            return FnFailure();
+        }
+        const Promise *promise = GetPromiseFromBundle(bundle, "meta", "tags");
+        if (bundle == NULL)
+        {
+            Log(LOG_LEVEL_ERR,
+                "Function %s couldn't find meta tags in '%s:%s'",
+                fp->name,
+                namespace,
+                name);
+            return FnFailure();
+        }
+        Rlist *start = PromiseGetConstraintAsList(ctx, "slist", promise);
+        if (start == NULL)
+        {
+            Log(LOG_LEVEL_ERR,
+                "Function %s couldn't find meta tags constraint string list",
+                fp->name);
+            return FnFailure();
+        }
+
+        tagset = StringSetNew();
+        Rlist *temp = start;
+        while (temp != NULL)
+        {
+            StringSetAdd(tagset, temp->val.item);
+            temp = temp->next;
+        }
     }
     else
     {
@@ -1682,7 +1767,7 @@ static FnCallResult FnCallBundlesMatching(EvalContext *ctx, const Policy *policy
     }
 
     const char *regex = RlistScalarValue(finalargs);
-    pcre *rx = CompileRegex(regex);
+    Regex *rx = CompileRegex(regex);
     if (!rx)
     {
         return FnFailure();
@@ -1745,14 +1830,14 @@ static FnCallResult FnCallBundlesMatching(EvalContext *ctx, const Policy *policy
         free(bundle_name);
     }
 
-    pcre_free(rx);
+    RegexDestroy(rx);
 
     return (FnCallResult) { FNCALL_SUCCESS, { matches, RVAL_TYPE_LIST } };
 }
 
 /*********************************************************************/
 
-static bool AddPackagesMatchingJsonLine(pcre *matcher, JsonElement *json, char *line)
+static bool AddPackagesMatchingJsonLine(Regex *matcher, JsonElement *json, char *line)
 {
     const size_t line_length = strlen(line);
     if (line_length > CF_BUFSIZE - 80)
@@ -1789,7 +1874,7 @@ static bool AddPackagesMatchingJsonLine(pcre *matcher, JsonElement *json, char *
     return true;
 }
 
-static bool GetLegacyPackagesMatching(pcre *matcher, JsonElement *json, const bool installed_mode)
+static bool GetLegacyPackagesMatching(Regex *matcher, JsonElement *json, const bool installed_mode)
 {
     char filename[CF_MAXVARSIZE];
     if (installed_mode)
@@ -1837,14 +1922,22 @@ static bool GetLegacyPackagesMatching(pcre *matcher, JsonElement *json, const bo
     return ret;
 }
 
-static bool GetPackagesMatching(pcre *matcher, JsonElement *json, const bool installed_mode, Rlist *default_inventory)
+static bool GetPackagesMatching(Regex *matcher, JsonElement *json, const bool installed_mode, Rlist *default_inventory)
 {
     dbid database = (installed_mode == true ? dbid_packages_installed : dbid_packages_updates);
+
+    bool read_some_db = false;
 
     for (const Rlist *rp = default_inventory; rp != NULL; rp = rp->next)
     {
         const char *pm_name =  RlistScalarValue(rp);
         size_t pm_name_size = strlen(pm_name);
+
+        if (StringContainsUnresolved(pm_name))
+        {
+            Log(LOG_LEVEL_DEBUG, "Package module '%s' contains unresolved variables", pm_name);
+            continue;
+        }
 
         Log(LOG_LEVEL_DEBUG, "Reading packages (%d) for package module [%s]",
                 database, pm_name);
@@ -1854,6 +1947,10 @@ static bool GetPackagesMatching(pcre *matcher, JsonElement *json, const bool ins
         {
             Log(LOG_LEVEL_ERR, "Can not open database %d to get packages data.", database);
             return false;
+        }
+        else
+        {
+            read_some_db = true;
         }
 
         char *key = "<inventory>";
@@ -1915,13 +2012,13 @@ static bool GetPackagesMatching(pcre *matcher, JsonElement *json, const bool ins
         }
         CloseDB(db_cached);
     }
-    return true;
+    return read_some_db;
 }
 
 static FnCallResult FnCallPackagesMatching(ARG_UNUSED EvalContext *ctx, ARG_UNUSED const Policy *policy, const FnCall *fp, const Rlist *finalargs)
 {
     const bool installed_mode = (strcmp(fp->name, "packagesmatching") == 0);
-    pcre *matcher;
+    Regex *matcher;
     {
         const char *regex_package = RlistScalarValue(finalargs);
         const char *regex_version = RlistScalarValue(finalargs->next);
@@ -1943,6 +2040,25 @@ static FnCallResult FnCallPackagesMatching(ARG_UNUSED EvalContext *ctx, ARG_UNUS
     bool ret = false;
 
     Rlist *default_inventory = GetDefaultInventoryFromContext(ctx);
+
+    bool inventory_allocated = false;
+    if (default_inventory == NULL)
+    {
+        // Did not find default inventory from context, try looking for
+        // existing LMDB databases in the state directory
+        dbid database = (installed_mode ? dbid_packages_installed
+                                        : dbid_packages_updates);
+        Seq *const seq = SearchExistingSubDBNames(database);
+        const size_t length = SeqLength(seq);
+        for (size_t i = 0; i < length; i++)
+        {
+            const char *const db_name = SeqAt(seq, i);
+            RlistAppendString(&default_inventory, db_name);
+            inventory_allocated = true;
+        }
+        SeqDestroy(seq);
+    }
+
     if (!default_inventory)
     {
         // Legacy package promise
@@ -1951,10 +2067,38 @@ static FnCallResult FnCallPackagesMatching(ARG_UNUSED EvalContext *ctx, ARG_UNUS
     else
     {
         // We are using package modules.
-        ret = GetPackagesMatching(matcher, json, installed_mode, default_inventory);
+        bool some_valid_inventory = false;
+        for (const Rlist *rp = default_inventory; !some_valid_inventory && (rp != NULL); rp = rp->next)
+        {
+            const char *pm_name =  RlistScalarValue(rp);
+            if (!StringContainsUnresolved(pm_name))
+            {
+                some_valid_inventory = true;
+            }
+        }
+
+        if (some_valid_inventory)
+        {
+            ret = GetPackagesMatching(matcher, json, installed_mode, default_inventory);
+        }
+        else
+        {
+            Log(LOG_LEVEL_DEBUG, "No valid package module inventory found");
+            RegexDestroy(matcher);
+            JsonDestroy(json);
+            if (inventory_allocated)
+            {
+                RlistDestroy(default_inventory);
+            }
+            return FnFailure();
+        }
     }
 
-    pcre_free(matcher);
+    if (inventory_allocated)
+    {
+        RlistDestroy(default_inventory);
+    }
+    RegexDestroy(matcher);
 
     if (ret == false)
     {
@@ -2169,6 +2313,40 @@ static VersionComparison GenericVersionCheck(
     }
 
     return comparison;
+}
+
+static FnCallResult FnCallVersionCompare(
+        ARG_UNUSED EvalContext *ctx,
+        ARG_UNUSED const Policy *policy,
+        const FnCall *fp,
+        const Rlist *args)
+{
+    assert(fp != NULL);
+    assert(fp->name != NULL);
+    if (args == NULL || args->next == NULL || args->next->next == NULL)
+    {
+        Log(LOG_LEVEL_ERR,
+            "Policy function %s requires 3 arguments:"
+            " %s(version, operator, version)",
+            fp->name,
+            fp->name);
+        return FnFailure();
+    }
+    const char *const version_a = RlistScalarValue(args);
+    const char *const operator = RlistScalarValue(args->next);
+    const char *const version_b = RlistScalarValue(args->next->next);
+
+    const BooleanOrError result = CompareVersionExpression(version_a, operator, version_b);
+    if (result == BOOLEAN_ERROR) {
+        Log(LOG_LEVEL_ERR,
+            "Cannot compare versions: %s(\"%s\", \"%s\", \"%s\")",
+            fp->name,
+            version_a,
+            operator,
+            version_b);
+        return FnFailure();
+    }
+    return FnReturnContext(result == BOOLEAN_TRUE);
 }
 
 static FnCallResult FnCallVersionMinimum(
@@ -2652,14 +2830,9 @@ static FnCallResult FnCallUrlGet(ARG_UNUSED EvalContext *ctx,
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 3L); // set default timeout
     curl_easy_setopt(curl, CURLOPT_VERBOSE, 0);
     curl_easy_setopt(curl,
-                     CURLOPT_PROTOCOLS,
-
+                     CURLOPT_PROTOCOLS_STR,
                      // Allowed protocols
-                     CURLPROTO_FILE |
-                     CURLPROTO_FTP |
-                     CURLPROTO_FTPS |
-                     CURLPROTO_HTTP |
-                     CURLPROTO_HTTPS);
+                     "file,ftp,ftps,http,https");
 
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, cfengine_curl_write_callback);
     curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, cfengine_curl_write_callback);
@@ -3175,7 +3348,7 @@ static FnCallResult FnCallGetFields(EvalContext *ctx,
                                     const FnCall *fp,
                                     const Rlist *finalargs)
 {
-    pcre *rx = CompileRegex(RlistScalarValue(finalargs));
+    Regex *rx = CompileRegex(RlistScalarValue(finalargs));
     if (!rx)
     {
         return FnFailure();
@@ -3189,7 +3362,7 @@ static FnCallResult FnCallGetFields(EvalContext *ctx,
     if (!fin)
     {
         Log(LOG_LEVEL_ERR, "File '%s' could not be read in getfields(). (fopen: %s)", filename, GetErrorStr());
-        pcre_free(rx);
+        RegexDestroy(rx);
         return FnFailure();
     }
 
@@ -3231,7 +3404,7 @@ static FnCallResult FnCallGetFields(EvalContext *ctx,
                         VarRefDestroy(ref);
                         free(line);
                         RlistDestroy(newlist);
-                        pcre_free(rx);
+                        RegexDestroy(rx);
                         return FnFailure();
                     }
                 }
@@ -3248,7 +3421,7 @@ static FnCallResult FnCallGetFields(EvalContext *ctx,
         line_count++;
     }
 
-    pcre_free(rx);
+    RegexDestroy(rx);
     free(line);
 
     if (!feof(fin))
@@ -3267,7 +3440,7 @@ static FnCallResult FnCallGetFields(EvalContext *ctx,
 
 static FnCallResult FnCallCountLinesMatching(ARG_UNUSED EvalContext *ctx, ARG_UNUSED const Policy *policy, ARG_UNUSED const FnCall *fp, const Rlist *finalargs)
 {
-    pcre *rx = CompileRegex(RlistScalarValue(finalargs));
+    Regex *rx = CompileRegex(RlistScalarValue(finalargs));
     if (!rx)
     {
         return FnFailure();
@@ -3279,7 +3452,7 @@ static FnCallResult FnCallCountLinesMatching(ARG_UNUSED EvalContext *ctx, ARG_UN
     if (!fin)
     {
         Log(LOG_LEVEL_ERR, "File '%s' could not be read in countlinesmatching(). (fopen: %s)", filename, GetErrorStr());
-        pcre_free(rx);
+        RegexDestroy(rx);
         return FnReturn("0");
     }
 
@@ -3301,7 +3474,7 @@ static FnCallResult FnCallCountLinesMatching(ARG_UNUSED EvalContext *ctx, ARG_UN
         free(line);
     }
 
-    pcre_free(rx);
+    RegexDestroy(rx);
 
     if (!feof(fin))
     {
@@ -3611,7 +3784,6 @@ static FnCallResult FnCallMapData(EvalContext *ctx, ARG_UNUSED const Policy *pol
         {
             const JsonElement *e2;
             JsonIterator iter2 = JsonIteratorInit(e);
-            int position = 0;
             while ((e2 = JsonIteratorNextValueByType(&iter2, JSON_ELEMENT_TYPE_PRIMITIVE, true)) != NULL)
             {
                 char *key = (char*) JsonGetPropertyAsString(e2);
@@ -3664,7 +3836,6 @@ static FnCallResult FnCallMapData(EvalContext *ctx, ARG_UNUSED const Policy *pol
                     EvalContextVariableRemoveSpecial(ctx, SPECIAL_SCOPE_THIS, "k[1]");
                 }
                 EvalContextVariableRemoveSpecial(ctx, SPECIAL_SCOPE_THIS, "v");
-                position++;
             }
         }
         break;
@@ -4759,7 +4930,7 @@ static FnCallResult FilterInternal(EvalContext *ctx,
                                    bool invert,
                                    long max)
 {
-    pcre *rx = NULL;
+    Regex *rx = NULL;
     if (do_regex)
     {
         rx = CompileRegex(regex);
@@ -4775,7 +4946,7 @@ static FnCallResult FilterInternal(EvalContext *ctx,
     // we failed to produce a valid JsonElement, so give up
     if (json == NULL)
     {
-        pcre_free(rx);
+        RegexDestroy(rx);
         return FnFailure();
     }
     else if (JsonGetElementType(json) != JSON_ELEMENT_TYPE_CONTAINER)
@@ -4783,7 +4954,7 @@ static FnCallResult FilterInternal(EvalContext *ctx,
         Log(LOG_LEVEL_VERBOSE, "Function '%s', argument '%s' was not a data container or list",
             fp->name, RlistScalarValueSafe(rp));
         JsonDestroyMaybe(json, allocated);
-        pcre_free(rx);
+        RegexDestroy(rx);
         return FnFailure();
     }
 
@@ -4838,7 +5009,7 @@ static FnCallResult FilterInternal(EvalContext *ctx,
 
     if (rx)
     {
-        pcre_free(rx);
+        RegexDestroy(rx);
     }
 
     bool contextmode = false;
@@ -5189,38 +5360,21 @@ static FnCallResult FnCallFold(EvalContext *ctx,
 
 /*********************************************************************/
 
-static FnCallResult FnCallDatatype(EvalContext *ctx, ARG_UNUSED const Policy *policy, const FnCall *fp, const Rlist *finalargs)
+static char *DataTypeStringFromVarName(EvalContext *ctx, const char *var_name, bool detail)
 {
-    assert(fp != NULL);
-    assert(fp->name != NULL);
+    assert(var_name != NULL);
 
-    if (finalargs == NULL)
-    {
-        Log(LOG_LEVEL_ERR,
-            "Function %s requires variable identifier as first argument",
-            fp->name);
-        return FnFailure();
-    }
-    const char* const var_name = RlistScalarValue(finalargs);
-
-    VarRef* const var_ref = VarRefParse(var_name);
+    VarRef *const var_ref = VarRefParse(var_name);
     DataType type;
     const void *value = EvalContextVariableGet(ctx, var_ref, &type);
     VarRefDestroy(var_ref);
-
-    /* detail argument defaults to false */
-    bool detail = false;
-    if (finalargs->next != NULL)
-    {
-        detail = BooleanFromString(RlistScalarValue(finalargs->next));
-    }
 
     const char *const type_str =
         (type == CF_DATA_TYPE_NONE) ? "none" : DataTypeToString(type);
 
     if (!detail)
     {
-        return FnReturn(type_str);
+        return SafeStringDuplicate(type_str);
     }
 
     if (type == CF_DATA_TYPE_CONTAINER)
@@ -5252,15 +5406,87 @@ static FnCallResult FnCallDatatype(EvalContext *ctx, ARG_UNUSED const Policy *po
             subtype_str = "null";
             break;
         default:
-            Log(LOG_LEVEL_ERR,
-                "Function %s failed to get subtype of type data", fp->name);
-            return FnFailure();
+            return NULL;
         }
 
-        return FnReturnF("%s %s", type_str, subtype_str);
+        return StringConcatenate(3, type_str, " ", subtype_str);
+    }
+    return StringConcatenate(2, "policy ", type_str);
+}
+
+static FnCallResult FnCallDatatype(EvalContext *ctx, ARG_UNUSED const Policy *policy, const FnCall *fp, const Rlist *finalargs)
+{
+    assert(fp != NULL);
+    assert(fp->name != NULL);
+
+    if (finalargs == NULL)
+    {
+        Log(LOG_LEVEL_ERR,
+            "Function %s requires variable identifier as first argument",
+            fp->name);
+        return FnFailure();
+    }
+    const char *const var_name = RlistScalarValue(finalargs);
+
+    /* detail argument defaults to false */
+    bool detail = false;
+    if (finalargs->next != NULL)
+    {
+        detail = BooleanFromString(RlistScalarValue(finalargs->next));
+    }
+    char *const output_string = DataTypeStringFromVarName(ctx, var_name, detail);
+
+    if (output_string == NULL)
+    {
+        Log(LOG_LEVEL_ERR, "Function %s could not parse var type",
+            fp->name);
+        return FnFailure();
     }
 
-    return FnReturnF("policy %s", type_str);
+    return FnReturnNoCopy(output_string);
+}
+
+/*********************************************************************/
+
+static FnCallResult FnCallIsDatatype(EvalContext *ctx, ARG_UNUSED const Policy *policy, const FnCall *fp, const Rlist *finalargs)
+{
+    assert(fp != NULL);
+    assert(fp->name != NULL);
+
+    // check args
+    const Rlist *const var_arg = finalargs;
+    if (var_arg == NULL)
+    {
+        Log(LOG_LEVEL_ERR, "Function %s requires a variable as first argument",
+            fp->name);
+        return FnFailure();
+    }
+
+    assert(finalargs != NULL); // assumes finalargs is already checked by var_arg
+    const Rlist *const type_arg = finalargs->next;
+    if (type_arg == NULL)
+    {
+        Log(LOG_LEVEL_ERR, "Function %s requires a type as second argument",
+            fp->name);
+        return FnFailure();
+    }
+
+    const char *const var_name = RlistScalarValue(var_arg);
+    const char *const type_name = RlistScalarValue(type_arg);
+    bool detail = StringContainsChar(type_name, ' ');
+
+    char *const type_string = DataTypeStringFromVarName(ctx, var_name, detail);
+
+    if (type_string == NULL)
+    {
+        Log(LOG_LEVEL_ERR, "Function %s could not determine type of the variable '%s'",
+            fp->name, var_name);
+        return FnFailure();
+    }
+    const bool matching = StringEqual(type_name, type_string);
+    free(type_string);
+
+    return FnReturnContext(matching);
 }
 
 /*********************************************************************/
@@ -5643,6 +5869,14 @@ static FnCallResult FnCallFormat(EvalContext *ctx, ARG_UNUSED const Policy *poli
 static FnCallResult FnCallIPRange(EvalContext *ctx, ARG_UNUSED const Policy *policy,
                                   const FnCall *fp, const Rlist *finalargs)
 {
+    assert(fp != NULL);
+
+    if (finalargs == NULL)
+    {
+        Log(LOG_LEVEL_ERR, "Function '%s' requires at least one argument", fp->name);
+        return FnFailure();
+    }
+
     const char *range   = RlistScalarValue(finalargs);
     const Rlist *ifaces = finalargs->next;
 
@@ -5707,6 +5941,14 @@ static FnCallResult FnCallIsIpInSubnet(ARG_UNUSED EvalContext *ctx,
                                        ARG_UNUSED const Policy *policy,
                                        const FnCall *fp, const Rlist *finalargs)
 {
+    assert(fp != NULL);
+
+    if (finalargs == NULL)
+    {
+        Log(LOG_LEVEL_ERR, "Function '%s' requires at least one argument", fp->name);
+        return FnFailure();
+    }
+
     const char *range = RlistScalarValue(finalargs);
     const Rlist *ips  = finalargs->next;
 
@@ -6323,7 +6565,7 @@ static FnCallResult FnCallRegExtract(EvalContext *ctx, ARG_UNUSED const Policy *
 
 static FnCallResult FnCallRegLine(ARG_UNUSED EvalContext *ctx, ARG_UNUSED const Policy *policy, const FnCall *fp, const Rlist *finalargs)
 {
-    pcre *rx = CompileRegex(RlistScalarValue(finalargs));
+    Regex *rx = CompileRegex(RlistScalarValue(finalargs));
     if (!rx)
     {
         return FnFailure();
@@ -6334,7 +6576,7 @@ static FnCallResult FnCallRegLine(ARG_UNUSED EvalContext *ctx, ARG_UNUSED const 
     FILE *fin = safe_fopen(arg_filename, "rt");
     if (!fin)
     {
-        pcre_free(rx);
+        RegexDestroy(rx);
         return FnReturnContext(false);
     }
 
@@ -6347,12 +6589,12 @@ static FnCallResult FnCallRegLine(ARG_UNUSED EvalContext *ctx, ARG_UNUSED const 
         {
             free(line);
             fclose(fin);
-            pcre_free(rx);
+            RegexDestroy(rx);
             return FnReturnContext(true);
         }
     }
 
-    pcre_free(rx);
+    RegexDestroy(rx);
     free(line);
 
     if (!feof(fin))
@@ -6824,6 +7066,12 @@ static FnCallResult FnCallEval(EvalContext *ctx, ARG_UNUSED const Policy *policy
 
 static FnCallResult FnCallReadFile(ARG_UNUSED EvalContext *ctx, ARG_UNUSED const Policy *policy, ARG_UNUSED const FnCall *fp, const Rlist *finalargs)
 {
+    if (finalargs == NULL)
+    {
+        Log(LOG_LEVEL_ERR, "Function 'readfile' requires at least one argument");
+        return FnFailure();
+    }
+
     char *filename = RlistScalarValue(finalargs);
     const Rlist *next = finalargs->next; // max_size argument, default to inf:
     long maxsize = next ? IntFromString(RlistScalarValue(next)) : IntFromString("inf");
@@ -7044,7 +7292,8 @@ static FnCallResult FnCallReadJson(ARG_UNUSED EvalContext *ctx,
 
 static FnCallResult ValidateDataGeneric(const char *const fname,
                                         const char *data,
-                                        const DataFileType requested_mode)
+                                        const DataFileType requested_mode,
+                                        bool strict)
 {
     assert(data != NULL);
     if (requested_mode != DATAFILETYPE_JSON)
@@ -7056,13 +7305,19 @@ static FnCallResult ValidateDataGeneric(const char *const fname,
     }
 
     JsonElement *json = NULL;
-    JsonParseError err = JsonParse(&data, &json);
+    JsonParseError err = JsonParseAll(&data, &json);
     if (err != JSON_PARSE_OK)
     {
         Log(LOG_LEVEL_VERBOSE, "%s: %s", fname, JsonParseErrorToString(err));
     }
 
-    FnCallResult ret = FnReturnContext(json != NULL);
+    bool isvalid = json != NULL;
+    if (strict)
+    {
+        isvalid = isvalid && JsonGetElementType(json) != JSON_ELEMENT_TYPE_PRIMITIVE;
+    }
+    
+    FnCallResult ret = FnReturnContext(isvalid);
     JsonDestroy(json);
     return ret;
 }
@@ -7078,12 +7333,17 @@ static FnCallResult FnCallValidData(ARG_UNUSED EvalContext *ctx,
         Log(LOG_LEVEL_ERR, "Function '%s' requires two arguments", fp->name);
         return FnFailure();
     }
+    bool strict = false;
+    if (args->next != NULL)
+    {
+        strict = BooleanFromString(RlistScalarValue(args->next));
+    }
 
     const char *data = RlistScalarValue(args);
     const char *const mode_string = RlistScalarValue(args->next);
     DataFileType requested_mode = GetDataFileTypeFromString(mode_string);
 
-    return ValidateDataGeneric(fp->name, data, requested_mode);
+    return ValidateDataGeneric(fp->name, data, requested_mode, strict);
 }
 
 static FnCallResult FnCallValidJson(ARG_UNUSED EvalContext *ctx,
@@ -7097,9 +7357,14 @@ static FnCallResult FnCallValidJson(ARG_UNUSED EvalContext *ctx,
         Log(LOG_LEVEL_ERR, "Function '%s' requires one argument", fp->name);
         return FnFailure();
     }
+    bool strict = false;
+    if (args->next != NULL)
+    {
+        strict = BooleanFromString(RlistScalarValue(args->next));
+    }
 
     const char *data = RlistScalarValue(args);
-    return ValidateDataGeneric(fp->name, data, DATAFILETYPE_JSON);
+    return ValidateDataGeneric(fp->name, data, DATAFILETYPE_JSON, strict);
 }
 
 static FnCallResult FnCallReadModuleProtocol(
@@ -8152,7 +8417,7 @@ static char *StripPatterns(char *file_buffer, const char *pattern, const char *f
         return file_buffer;
     }
 
-    pcre *rx = CompileRegex(pattern);
+    Regex *rx = CompileRegex(pattern);
     if (!rx)
     {
         return file_buffer;
@@ -8183,7 +8448,7 @@ static char *StripPatterns(char *file_buffer, const char *pattern, const char *f
         }
     }
 
-    pcre_free(rx);
+    RegexDestroy(rx);
     return file_buffer;
 }
 
@@ -8417,6 +8682,212 @@ static FnCallResult FnCallNetworkConnections(EvalContext *ctx, ARG_UNUSED const 
 
 /*********************************************************************/
 
+struct IsReadableThreadData
+{
+    pthread_t thread;
+    pthread_cond_t cond;
+    pthread_mutex_t mutex;
+    const char *path;
+    FnCallResult result;
+};
+
+static void *IsReadableThreadRoutine(void *data)
+{
+    assert(data != NULL);
+
+    struct IsReadableThreadData *const thread_data = data;
+
+    // Give main thread time to call pthread_cond_timedwait(3)
+    int ret = pthread_mutex_lock(&thread_data->mutex);
+    if (ret != 0)
+    {
+        ProgrammingError("Failed to lock mutex: %s",
+                         GetErrorStrFromCode(ret));
+    }
+
+    thread_data->result = FnReturnContext(false);
+
+    // Allow main thread to require lock on pthread_cond_timedwait(3)
+    ret = pthread_mutex_unlock(&thread_data->mutex);
+    if (ret != 0)
+    {
+        ProgrammingError("Failed to unlock mutex: %s",
+                         GetErrorStrFromCode(ret));
+    }
+
+    char buf[1];
+    const int fd = open(thread_data->path, O_RDONLY);
+    if (fd < 0) {
+        Log(LOG_LEVEL_DEBUG, "Failed to open file '%s': %s",
+            thread_data->path, GetErrorStr());
+    }
+    else if (read(fd, buf, sizeof(buf)) < 0)
+    {
+        Log(LOG_LEVEL_DEBUG, "Failed to read from file '%s': %s",
+            thread_data->path, GetErrorStr());
+        close(fd);
+    }
+    else
+    {
+        close(fd);
+        thread_data->result = FnReturnContext(true);
+    }
+
+    ret = pthread_cond_signal(&(thread_data->cond));
+    if (ret != 0)
+    {
+        Log(LOG_LEVEL_ERR, "Failed to signal waiting thread: %s",
+            GetErrorStrFromCode(ret));
+    }
+
+    return NULL;
+}
+
+static FnCallResult FnCallIsReadable(ARG_UNUSED EvalContext *const ctx,
+                                     ARG_UNUSED const Policy *const policy,
+                                     const FnCall *const fp,
+                                     const Rlist *finalargs)
+{
+    assert(fp != NULL);
+    assert(fp->name != NULL);
+
+    if (finalargs == NULL)
+    {
+        Log(LOG_LEVEL_ERR, "Function %s requires path as first argument",
+            fp->name);
+        return FnFailure();
+    }
+    const char *const path = RlistScalarValue(finalargs);
+
+    long timeout = (finalargs->next == NULL) ? 3L /* default timeout */
+                 : IntFromString(RlistScalarValue(finalargs->next));
+    assert(timeout >= 0);
+
+    if (timeout == 0) // Try read in main thread, possibly blocking forever
+    {
+        Log(LOG_LEVEL_DEBUG,
+            "Checking if file '%s' is readable in main thread, "
+            "possibly blocking forever.", path);
+
+        char buf[1];
+        const int fd = open(path, O_RDONLY);
+        if (fd < 0)
+        {
+            Log(LOG_LEVEL_DEBUG, "Failed to open file '%s': %s", path,
+                GetErrorStr());
+            return FnReturnContext(false);
+        }
+        else if (read(fd, buf, sizeof(buf)) < 0)
+        {
+            Log(LOG_LEVEL_DEBUG, "Failed to read from file '%s': %s", path,
+                GetErrorStr());
+            close(fd);
+            return FnReturnContext(false);
+        }
+
+        close(fd);
+        return FnReturnContext(true);
+    }
+
+    // Else try read in separate thread, possibly blocking for N seconds
+    Log(LOG_LEVEL_DEBUG,
+        "Checking if file '%s' is readable in separate thread, "
+        "possibly blocking for %ld seconds.", path, timeout);
+
+    struct IsReadableThreadData thread_data = {0};
+    thread_data.path = path;
+
+    int ret = pthread_mutex_init(&thread_data.mutex, NULL);
+    if (ret != 0)
+    {
+        Log(LOG_LEVEL_ERR, "Failed to initialize mutex: %s",
+            GetErrorStrFromCode(ret));
+        return FnFailure();
+    }
+
+    ret = pthread_cond_init(&thread_data.cond, NULL);
+    if (ret != 0)
+    {
+        Log(LOG_LEVEL_ERR, "Failed to initialize condition: %s",
+            GetErrorStrFromCode(ret));
+        return FnFailure();
+    }
+
+    // Keep thread from doing its thing until we call
+    // pthread_cond_timedwait(3)
+    ret = pthread_mutex_lock(&thread_data.mutex);
+    if (ret != 0)
+    {
+        Log(LOG_LEVEL_ERR, "Failed to lock mutex: %s",
+            GetErrorStrFromCode(ret));
+        return FnFailure();
+    }
+
+    ret = pthread_create(&thread_data.thread, NULL, &IsReadableThreadRoutine,
+                         &thread_data);
+    if (ret != 0)
+    {
+        Log(LOG_LEVEL_ERR, "Failed to create thread: %s",
+            GetErrorStrFromCode(ret));
+        return FnFailure();
+    }
+
+    FnCallResult result;
+    // Wait on thread to finish or timeout
+    ret = ThreadWait(&thread_data.cond, &thread_data.mutex, timeout);
+    switch (ret)
+    {
+        case 0: // Thread finished in time
+            result = thread_data.result;
+            break;
+
+        case ETIMEDOUT: // Thread timed out
+            Log(LOG_LEVEL_DEBUG, "File '%s' is not readable: "
+                "Read operation timed out, exceeded %ld seconds.", path,
+                timeout);
+
+            ret = pthread_cancel(thread_data.thread);
+            if (ret != 0)
+            {
+                Log(LOG_LEVEL_ERR, "Failed to cancel thread");
+                return FnFailure();
+            }
+
+            result = FnReturnContext(false);
+            break;
+
+        default:
+            Log(LOG_LEVEL_ERR, "Failed to wait for condition: %s",
+                GetErrorStrFromCode(ret));
+            return FnFailure();
+
+    }
+
+    ret = pthread_mutex_unlock(&thread_data.mutex);
+    if (ret != 0)
+    {
+        Log(LOG_LEVEL_ERR, "Failed to unlock mutex");
+        return FnFailure();
+    }
+
+    void *status;
+    ret = pthread_join(thread_data.thread, &status);
+    if (ret != 0)
+    {
+        Log(LOG_LEVEL_ERR, "Failed to join thread");
+        return FnFailure();
+    }
+
+    if (status == PTHREAD_CANCELED)
+    {
+        Log(LOG_LEVEL_DEBUG, "Thread was canceled");
+    }
+
+    return result;
+}
+
+/*********************************************************************/
+
 static FnCallResult FnCallFindfilesUp(ARG_UNUSED EvalContext *ctx, ARG_UNUSED const Policy *policy, const FnCall *fp, const Rlist *finalargs)
 {
     assert(fp != NULL);
@@ -8463,6 +8934,7 @@ static FnCallResult FnCallFindfilesUp(ARG_UNUSED EvalContext *ctx, ARG_UNUSED co
         return FnFailure();
     }
 
+    MapName(path); // Makes sure we get host native path separators
     DeleteRedundantSlashes(path);
 
     size_t len = strlen(path);
@@ -8578,6 +9050,9 @@ void ModuleProtocol(EvalContext *ctx, const char *command, const char *line, int
 {
     assert(tags);
 
+    StringSetAdd(tags, xstrdup("source=module"));
+    StringSetAddF(tags, "derived_from=%s", command);
+
     // see the sscanf() limit below
     if(context_size < 51)
     {
@@ -8610,7 +9085,7 @@ void ModuleProtocol(EvalContext *ctx, const char *command, const char *line, int
             content[0] != '\0')
         {
             /* Symbol ID without \200 to \377: */
-            pcre *context_name_rx = CompileRegex("[a-zA-Z0-9_]+");
+            Regex *context_name_rx = CompileRegex("[a-zA-Z0-9_]+");
             if (!context_name_rx)
             {
                 Log(LOG_LEVEL_ERR,
@@ -8629,7 +9104,7 @@ void ModuleProtocol(EvalContext *ctx, const char *command, const char *line, int
 
             if (context_name_rx)
             {
-                pcre_free(context_name_rx);
+                RegexDestroy(context_name_rx);
             }
         }
         else if (sscanf(line + 1, "meta=%1024[^\n]", content) == 1 &&
@@ -8640,6 +9115,7 @@ void ModuleProtocol(EvalContext *ctx, const char *command, const char *line, int
 
             StringSetAddSplit(tags, content, ',');
             StringSetAdd(tags, xstrdup("source=module"));
+            StringSetAddF(tags, "derived_from=%s", command);
         }
         else if (sscanf(line + 1, "persistence=%ld", persistence) == 1)
         {
@@ -9063,6 +9539,14 @@ static const FnCallArg CFVERSIONBETWEEN_ARGS[] =
     {NULL, CF_DATA_TYPE_NONE, NULL}
 };
 
+static const FnCallArg VERSION_COMPARE_ARGS[] =
+{
+    {CF_ANYSTRING, CF_DATA_TYPE_STRING, "First version to compare"},
+    {"=,==,!=,>,<,>=,<=", CF_DATA_TYPE_OPTION, "Operator to use in comparison"},
+    {CF_ANYSTRING, CF_DATA_TYPE_STRING, "Second version to compare"},
+    {NULL, CF_DATA_TYPE_NONE, NULL}
+};
+
 static const FnCallArg CLASSIFY_ARGS[] =
 {
     {CF_ANYSTRING, CF_DATA_TYPE_STRING, "Input string"},
@@ -9266,7 +9750,7 @@ static const FnCallArg HOSTSSEEN_ARGS[] =
 static const FnCallArg HOSTSWITHCLASS_ARGS[] =
 {
     {"[a-zA-Z0-9_]+", CF_DATA_TYPE_STRING, "Class name to look for"},
-    {"name,address", CF_DATA_TYPE_OPTION, "Type of return value desired"},
+    {"name,address,hostkey", CF_DATA_TYPE_OPTION, "Type of return value desired"},
     {NULL, CF_DATA_TYPE_NONE, NULL}
 };
 
@@ -9499,9 +9983,10 @@ static const FnCallArg READFILE_ARGS[] =
     {NULL, CF_DATA_TYPE_NONE, NULL}
 };
 
-static const FnCallArg VALIDDATATYPE_ARGS[] =
+static const FnCallArg VALIDJSON_ARGS[] =
 {
-    {CF_ANYSTRING, CF_DATA_TYPE_STRING, "Data to validate"},
+    {CF_ANYSTRING, CF_DATA_TYPE_STRING, "String to validate as JSON"},
+    {CF_BOOL, CF_DATA_TYPE_OPTION, "Enable more strict validation, requiring the result to be a valid data container, matching the requirements of parsejson()."},
     {NULL, CF_DATA_TYPE_NONE, NULL}
 };
 
@@ -9556,8 +10041,9 @@ static const FnCallArg READDATA_ARGS[] =
 
 static const FnCallArg VALIDDATA_ARGS[] =
 {
-    {CF_ANYSTRING, CF_DATA_TYPE_STRING, "Data to validate"},
+    {CF_ANYSTRING, CF_DATA_TYPE_STRING, "String to validate as JSON"},
     {"JSON", CF_DATA_TYPE_OPTION, "Type of data to validate"},
+    {CF_BOOL, CF_DATA_TYPE_OPTION, "Enable more strict validation, requiring the result to be a valid data container, matching the requirements of parsejson()."},
     {NULL, CF_DATA_TYPE_NONE, NULL}
 };
 
@@ -9670,7 +10156,7 @@ static const FnCallArg REMOTESCALAR_ARGS[] =
 {
     {CF_IDRANGE, CF_DATA_TYPE_STRING, "Variable identifier"},
     {CF_ANYSTRING, CF_DATA_TYPE_STRING, "Hostname or IP address of server"},
-    {CF_BOOL, CF_DATA_TYPE_OPTION, "Use enryption"},
+    {CF_BOOL, CF_DATA_TYPE_OPTION, "Use encryption"},
     {NULL, CF_DATA_TYPE_NONE, NULL}
 };
 
@@ -9962,10 +10448,23 @@ static const FnCallArg FINDFILES_UP_ARGS[] =
     {NULL, CF_DATA_TYPE_NONE, NULL}
 };
 
+static const FnCallArg ISREADABLE_ARGS[] =
+{
+    {CF_ABSPATHRANGE, CF_DATA_TYPE_STRING, "Path to file"},
+    {CF_VALRANGE, CF_DATA_TYPE_INT, "Timeout interval"},
+    {NULL, CF_DATA_TYPE_NONE, NULL}
+};
+
 static const FnCallArg DATATYPE_ARGS[] =
 {
     {CF_ANYSTRING, CF_DATA_TYPE_STRING, "Variable identifier"},
     {CF_BOOL, CF_DATA_TYPE_OPTION, "Enable detailed type decription"},
+    {NULL, CF_DATA_TYPE_NONE, NULL}
+};
+static const FnCallArg IS_DATATYPE_ARGS[] =
+{
+    {CF_ANYSTRING, CF_DATA_TYPE_STRING, "Variable identifier"},
+    {CF_ANYSTRING, CF_DATA_TYPE_STRING, "Type"},
     {NULL, CF_DATA_TYPE_NONE, NULL}
 };
 
@@ -9976,6 +10475,9 @@ static const FnCallArg DATATYPE_ARGS[] =
 
 /* see fncall.h enum FnCallType */
 
+/* In evalfunction_test.c we both include this file and link with libpromises.
+ * This guard makes sure we don't get a duplicate definition of this symbol */
+#ifndef CFENGINE_EVALFUNCTION_TEST_C
 const FnCallType CF_FNCALL_TYPES[] =
 {
     FnCallTypeNew("accessedbefore", CF_DATA_TYPE_CONTEXT, ACCESSEDBEFORE_ARGS, &FnCallIsAccessedBefore, "True if arg1 was accessed before arg2 (atime)",
@@ -10083,6 +10585,8 @@ const FnCallType CF_FNCALL_TYPES[] =
     FnCallTypeNew("getvalues", CF_DATA_TYPE_STRING_LIST, GETINDICES_ARGS, &FnCallGetValues, "Get a list of values in the list or array or data container arg1",
                   FNCALL_OPTION_COLLECTING, FNCALL_CATEGORY_DATA, SYNTAX_STATUS_NORMAL),
     FnCallTypeNew("getvariablemetatags", CF_DATA_TYPE_STRING_LIST, GETVARIABLEMETATAGS_ARGS, &FnCallGetMetaTags, "Collect the variable arg1's meta tags into an slist, optionally collecting only tag key arg2",
+                  FNCALL_OPTION_VARARG, FNCALL_CATEGORY_UTILS, SYNTAX_STATUS_NORMAL),
+    FnCallTypeNew("getbundlemetatags", CF_DATA_TYPE_STRING_LIST, GETVARIABLEMETATAGS_ARGS, &FnCallGetMetaTags, "Collect the bundle arg1's meta tags into an slist, optionally collecting only tag key arg2",
                   FNCALL_OPTION_VARARG, FNCALL_CATEGORY_UTILS, SYNTAX_STATUS_NORMAL),
     FnCallTypeNew("grep", CF_DATA_TYPE_STRING_LIST, GREP_ARGS, &FnCallGrep, "Extract the sub-list if items matching the regular expression in arg1 of the list or array or data container arg2",
                   FNCALL_OPTION_COLLECTING, FNCALL_CATEGORY_DATA, SYNTAX_STATUS_NORMAL),
@@ -10292,11 +10796,13 @@ const FnCallType CF_FNCALL_TYPES[] =
     FnCallTypeNew("userexists", CF_DATA_TYPE_CONTEXT, USEREXISTS_ARGS, &FnCallUserExists, "True if user name or numerical id exists on this host",
                   FNCALL_OPTION_NONE, FNCALL_CATEGORY_SYSTEM, SYNTAX_STATUS_NORMAL),
     FnCallTypeNew("validdata", CF_DATA_TYPE_CONTEXT, VALIDDATA_ARGS, &FnCallValidData, "Check for errors in JSON or YAML data",
-                  FNCALL_OPTION_NONE, FNCALL_CATEGORY_DATA, SYNTAX_STATUS_NORMAL),
-    FnCallTypeNew("validjson", CF_DATA_TYPE_CONTEXT, VALIDDATATYPE_ARGS, &FnCallValidJson, "Check for errors in JSON data",
+                  FNCALL_OPTION_VARARG, FNCALL_CATEGORY_DATA, SYNTAX_STATUS_NORMAL),
+    FnCallTypeNew("validjson", CF_DATA_TYPE_CONTEXT, VALIDJSON_ARGS, &FnCallValidJson, "Check for errors in JSON data",
                   FNCALL_OPTION_VARARG, FNCALL_CATEGORY_DATA, SYNTAX_STATUS_NORMAL),
     FnCallTypeNew("variablesmatching", CF_DATA_TYPE_STRING_LIST, CLASSMATCH_ARGS, &FnCallVariablesMatching, "List the variables matching regex arg1 and tag regexes arg2,arg3,...",
                   FNCALL_OPTION_VARARG, FNCALL_CATEGORY_DATA, SYNTAX_STATUS_NORMAL),
+    FnCallTypeNew("version_compare", CF_DATA_TYPE_CONTEXT, VERSION_COMPARE_ARGS, &FnCallVersionCompare, "Compare two version numbers with a specified operator",
+                  FNCALL_OPTION_NONE, FNCALL_CATEGORY_UTILS, SYNTAX_STATUS_NORMAL),
 
     // Functions section following new naming convention
     FnCallTypeNew("string_mustache", CF_DATA_TYPE_STRING, STRING_MUSTACHE_ARGS, &FnCallStringMustache, "Expand a Mustache template from arg1 into a string using the optional data container in arg2 or datastate()",
@@ -10369,10 +10875,15 @@ const FnCallType CF_FNCALL_TYPES[] =
                   FNCALL_OPTION_VARARG, FNCALL_CATEGORY_FILES, SYNTAX_STATUS_NORMAL),
     FnCallTypeNew("search_up", CF_DATA_TYPE_CONTAINER, FINDFILES_UP_ARGS, &FnCallFindfilesUp, "Hush... This is a super secret alias name for function 'findfiles_up'",
                   FNCALL_OPTION_VARARG, FNCALL_CATEGORY_FILES, SYNTAX_STATUS_NORMAL),
+    FnCallTypeNew("isreadable", CF_DATA_TYPE_CONTEXT, ISREADABLE_ARGS, &FnCallIsReadable, "Check if file is readable. Timeout immediately or after optional timeout interval",
+                  FNCALL_OPTION_VARARG, FNCALL_CATEGORY_FILES, SYNTAX_STATUS_NORMAL),
 
     // Datatype functions
     FnCallTypeNew("type", CF_DATA_TYPE_STRING, DATATYPE_ARGS, &FnCallDatatype, "Get type description as string",
                   FNCALL_OPTION_VARARG, FNCALL_CATEGORY_DATA, SYNTAX_STATUS_NORMAL),
+    FnCallTypeNew("is_type", CF_DATA_TYPE_STRING, IS_DATATYPE_ARGS, &FnCallIsDatatype, "Compare type of variable with type",
+                  FNCALL_OPTION_VARARG, FNCALL_CATEGORY_DATA, SYNTAX_STATUS_NORMAL),
 
     FnCallTypeNewNull()
 };
+#endif // CFENGINE_EVALFUNCTION_TEST_C

@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -43,6 +43,8 @@
 #include <audit.h>
 #include <logging.h>
 #include <expand.h>
+#include <file_lib.h>                   /* FileLock */
+#include <known_dirs.h>                 /* GetStateDir() */
 
 static const char *const POLICY_ERROR_BUNDLE_NAME_RESERVED =
     "Use of a reserved container name as a bundle name \"%s\"";
@@ -61,8 +63,6 @@ static const char *const POLICY_ERROR_PROMISE_DUPLICATE_HANDLE =
     "Duplicate promise handle %s found";
 static const char *const POLICY_ERROR_LVAL_INVALID =
     "Promise type %s has unknown attribute %s";
-static const char *const POLICY_ERROR_PROMISE_ATTRIBUTE_NOT_IMPLEMENTED =
-    "Common attribute '%s' not implemented for custom promises (%s)";
 static const char *const POLICY_ERROR_PROMISE_ATTRIBUTE_NOT_SUPPORTED =
     "Common attribute '%s' not supported for custom promises, use '%s' instead (%s promises)";
 static const char *const POLICY_ERROR_PROMISE_TYPE_UNSUPPORTED =
@@ -98,6 +98,29 @@ Rval DefaultBundleConstraint(const Promise *pp, char *promisetype)
 const char *NamespaceDefault(void)
 {
     return "default";
+}
+
+/*************************************************************************/
+
+#define MASTERFILES_STAGE_LOCK_FNAME "masterfiles-stage.lock"
+
+bool GetMasterfilesStageLock(FileLock *lock, bool exclusive, bool wait)
+{
+    assert(lock != NULL);
+    char path[PATH_MAX];
+    NDEBUG_UNUSED size_t ret = StringCopy(GetStateDir(), path, sizeof(path));
+    assert(ret < sizeof(path));
+    NDEBUG_UNUSED char *path_ret = JoinPaths(path, sizeof(path), MASTERFILES_STAGE_LOCK_FNAME);
+    assert(path_ret != NULL);
+
+    if (exclusive)
+    {
+        return (ExclusiveFileLockPath(lock, path, wait) == 0);
+    }
+    else
+    {
+        return (SharedFileLockPath(lock, path, wait) == 0);
+    }
 }
 
 /*************************************************************************/
@@ -2107,7 +2130,7 @@ void BundleToString(Writer *writer, Bundle *bundle)
             }
 
             IndentPrint(writer, 2);
-            ScalarWrite(writer, pp->promiser, true);
+            ScalarWrite(writer, pp->promiser, true, false);
 
             /* FIX: add support
              *
@@ -2330,7 +2353,7 @@ static Body *PolicyAppendBodyJson(Policy *policy, JsonElement *json_body)
     }
 
     Body *body = PolicyAppendBody(policy, ns, name, type, args, source_path, false);
-
+    RlistDestroy(args); // It's copied by PolicyAppendBody()
     {
         JsonElement *json_contexts = JsonObjectGetAsArray(json_body, "contexts");
         for (size_t i = 0; i < JsonLength(json_contexts); i++)
@@ -2656,9 +2679,9 @@ bool PromiseBundleOrBodyConstraintExists(const EvalContext *ctx, const char *lva
     return false;
 }
 
-static bool CheckScalarNotEmptyVarRef(const char *scalar)
+static inline bool CheckScalarNotEmptyVarRef(const char *scalar)
 {
-    return (strcmp("$()", scalar) != 0) && (strcmp("${}", scalar) != 0);
+    return (!StringEqual("$()", scalar) && !StringEqual("${}", scalar));
 }
 
 static bool ValidateCustomPromise(const Promise *pp, Seq *errors)
@@ -2687,26 +2710,11 @@ static bool ValidateCustomPromise(const Promise *pp, Seq *errors)
                     "if",
                     promise_type));
             valid = false;
-        } else if (StringEqual(name, "action_policy")
-            || StringEqual(name, "expireafter")
-            || StringEqual(name, "meta"))
-        {
-            // TODO: Remove 1 attribute at a time, test and fix.
-            //       https://tracker.mender.io/browse/CFE-3392
-            SeqAppend(
-                errors,
-                PolicyErrorNew(
-                    POLICY_ELEMENT_TYPE_PROMISE,
-                    pp,
-                    POLICY_ERROR_PROMISE_ATTRIBUTE_NOT_IMPLEMENTED,
-                    name,
-                    promise_type));
-            valid = false;
         }
     }
 
     // TODO: If we are running --full-check, spawn promise module and perform
-    //       validate operation. https://tracker.mender.io/browse/CFE-3430
+    //       validate operation. https://northerntech.atlassian.net/browse/CFE-3430
 
     return valid;
 }

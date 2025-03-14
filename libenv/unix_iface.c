@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -39,6 +39,7 @@
 #include <ip_address.h>
 #include <file_lib.h>
 #include <cleanup.h>
+#include <unix.h> /* GetRelocatedProcdirRoot() and GetProcdirPid() */
 
 #ifdef HAVE_SYS_JAIL_H
 # include <sys/jail.h>
@@ -713,7 +714,7 @@ static void FindV6InterfacesInfo(EvalContext *ctx, Rlist **interfaces, Rlist **h
 
                 // We know there was more data, at least a colon:
                 assert(src_length == bytes_to_copy);
-                const size_t dst_length = src_length - 1;
+                NDEBUG_UNUSED const size_t dst_length = src_length - 1;
 
                 // We copied everything up to, but not including, the colon:
                 assert(ifconfig_line[dst_length] == ':');
@@ -721,6 +722,11 @@ static void FindV6InterfacesInfo(EvalContext *ctx, Rlist **interfaces, Rlist **h
             }
         }
 
+        if (IgnoreInterface(current_interface))
+        {
+            // Ignore interfaces listed in ignore_interfaces.rx
+            continue;
+        }
 
         const char *const stripped_ifconfig_line =
             TrimWhitespace(ifconfig_line);
@@ -836,24 +842,70 @@ static void FindV6InterfacesInfo(EvalContext *ctx, Rlist **interfaces, Rlist **h
 static void InitIgnoreInterfaces()
 {
     FILE *fin;
-    char filename[CF_BUFSIZE],regex[256];
+    char filename[CF_BUFSIZE], regex[256];
 
-    snprintf(filename, sizeof(filename), "%s%c%s", GetInputDir(), FILE_SEPARATOR, CF_IGNORE_INTERFACES);
+    int ret = snprintf(
+        filename,
+        sizeof(filename),
+        "%s%c%s",
+        GetWorkDir(),
+        FILE_SEPARATOR,
+        CF_IGNORE_INTERFACES);
+    assert(ret >= 0 && (size_t) ret < sizeof(filename));
 
-    if ((fin = fopen(filename,"r")) == NULL)
+    if ((fin = fopen(filename, "r")) == NULL)
     {
-        Log(LOG_LEVEL_VERBOSE, "No interface exception file %s",filename);
-        return;
+        Log((errno == ENOENT) ? LOG_LEVEL_VERBOSE : LOG_LEVEL_ERR,
+            "Failed to open interface exception file %s: %s",
+            filename,
+            GetErrorStr());
+
+        /* LEGACY: The 'ignore_interfaces.rx' file was previously located in
+         * $(sys.inputdir). Consequently, if the file is found in this
+         * directory but not in $(sys.workdir), we will still process it, but
+         * issue a warning. */
+        ret = snprintf(
+            filename,
+            sizeof(filename),
+            "%s%c%s",
+            GetInputDir(),
+            FILE_SEPARATOR,
+            CF_IGNORE_INTERFACES);
+        assert(ret >= 0 && (size_t) ret < sizeof(filename));
+
+        if ((fin = fopen(filename, "r")) == NULL)
+        {
+            Log((errno == ENOENT) ? LOG_LEVEL_VERBOSE : LOG_LEVEL_ERR,
+                "Failed to open interface exception file %s: %s",
+                filename,
+                GetErrorStr());
+            return;
+        }
+
+        Log(LOG_LEVEL_WARNING,
+            "Found interface exception file %s in %s but it should be in %s. "
+            "Please consider moving it to the appropriate location.",
+            CF_IGNORE_INTERFACES,
+            GetInputDir(),
+            GetWorkDir());
     }
 
     while (!feof(fin))
     {
         regex[0] = '\0';
-        int scanCount = fscanf(fin,"%255s",regex);
+        int scanCount = fscanf(fin, "%255s", regex);
+        if (ferror(fin) != 0)
+        {
+            Log(LOG_LEVEL_ERR,
+                "Failed to read interface exception file %s: %s",
+                filename,
+                GetErrorStr());
+            break;
+        }
 
         if (scanCount != 0 && *regex != '\0')
         {
-           RlistPrependScalarIdemp(&IGNORE_INTERFACES, regex);
+            RlistPrependScalarIdemp(&IGNORE_INTERFACES, regex);
         }
     }
 
@@ -1232,6 +1284,10 @@ static JsonElement* GetNetworkingStatsInfo(const char *filename)
 
         fclose(fin);
     }
+    else
+    {
+        Log(LOG_LEVEL_VERBOSE, "netstat file not found at '%s'", filename);
+    }
 
     return stats;
 }
@@ -1241,7 +1297,7 @@ static JsonElement* GetNetworkingStatsInfo(const char *filename)
 // always returns the parsed data. If the key is not NULL, also
 // creates a sys.KEY variable.
 
-JsonElement* GetProcFileInfo(EvalContext *ctx, const char* filename, const char* key, const char* extracted_key, ProcPostProcessFn post, ProcTiebreakerFn tiebreak, const char* regex)
+JsonElement* GetProcFileInfo(EvalContext *ctx, const char* filename, const char* key, const char* extracted_key, ProcPostProcessFn post, ProcTiebreakerFn tiebreak, const char* pattern)
 {
     JsonElement *info = NULL;
     bool extract_key_mode = (extracted_key != NULL);
@@ -1251,15 +1307,8 @@ JsonElement* GetProcFileInfo(EvalContext *ctx, const char* filename, const char*
     {
         Log(LOG_LEVEL_VERBOSE, "Reading %s info from %s", key, filename);
 
-        pcre *pattern = NULL;
-        {
-            const char *errorstr;
-            int erroffset;
-            pattern = pcre_compile(regex, PCRE_MULTILINE | PCRE_DOTALL,
-                                   &errorstr, &erroffset, NULL);
-        }
-
-        if (pattern != NULL)
+        Regex *regex = CompileRegex(pattern);
+        if (regex != NULL)
         {
             size_t line_size = CF_BUFSIZE;
             char *line = xmalloc(line_size);
@@ -1268,7 +1317,7 @@ JsonElement* GetProcFileInfo(EvalContext *ctx, const char* filename, const char*
 
             while (CfReadLine(&line, &line_size, fin) != -1)
             {
-                JsonElement *item = StringCaptureData(pattern, regex, line);
+                JsonElement *item = StringCaptureData(regex, NULL, line);
 
                 if (item != NULL)
                 {
@@ -1332,7 +1381,7 @@ JsonElement* GetProcFileInfo(EvalContext *ctx, const char* filename, const char*
                 BufferDestroy(varname);
             }
 
-            pcre_free(pattern);
+            RegexDestroy(regex);
         }
 
         fclose(fin);
@@ -1346,12 +1395,13 @@ JsonElement* GetProcFileInfo(EvalContext *ctx, const char* filename, const char*
 void GetNetworkingInfo(EvalContext *ctx)
 {
     const char *procdir_root = GetRelocatedProcdirRoot();
+    int promiser_pid = GetProcdirPid();
 
     Buffer *pbuf = BufferNew();
 
     JsonElement *inet = JsonObjectCreate(2);
 
-    BufferPrintf(pbuf, "%s/proc/net/netstat", procdir_root);
+    BufferPrintf(pbuf, "%s/proc/%d/net/netstat", procdir_root, promiser_pid);
     JsonElement *inet_stats = GetNetworkingStatsInfo(BufferData(pbuf));
 
     if (inet_stats != NULL)
@@ -1359,7 +1409,7 @@ void GetNetworkingInfo(EvalContext *ctx)
         JsonObjectAppendElement(inet, "stats", inet_stats);
     }
 
-    BufferPrintf(pbuf, "%s/proc/net/route", procdir_root);
+    BufferPrintf(pbuf, "%s/proc/%d/net/route", procdir_root, promiser_pid);
     JsonElement *routes = GetProcFileInfo(ctx, BufferData(pbuf),  NULL, NULL, &NetworkingRoutesPostProcessInfo, NULL,
                     // format: Iface	Destination	Gateway 	Flags	RefCnt	Use	Metric	Mask		MTU	Window	IRTT
                     //         eth0	00000000	0102A8C0	0003	0	0	1024	00000000	0	0	0
@@ -1407,7 +1457,7 @@ void GetNetworkingInfo(EvalContext *ctx)
 
     JsonElement *inet6 = JsonObjectCreate(3);
 
-    BufferPrintf(pbuf, "%s/proc/net/snmp6", procdir_root);
+    BufferPrintf(pbuf, "%s/proc/%d/net/snmp6", procdir_root, promiser_pid);
     JsonElement *inet6_stats = GetProcFileInfo(ctx, BufferData(pbuf), NULL, NULL, NULL, NULL,
                                                "^\\s*(?<key>\\S+)\\s+(?<value>\\d+)");
 
@@ -1433,7 +1483,7 @@ void GetNetworkingInfo(EvalContext *ctx)
         JsonDestroy(inet6_stats);
     }
 
-    BufferPrintf(pbuf, "%s/proc/net/ipv6_route", procdir_root);
+    BufferPrintf(pbuf, "%s/proc/%d/net/ipv6_route", procdir_root, promiser_pid);
     JsonElement *inet6_routes = GetProcFileInfo(ctx, BufferData(pbuf),  NULL, NULL, &NetworkingIPv6RoutesPostProcessInfo, NULL,
                     // format: dest                    dest_prefix source                source_prefix next_hop                         metric   refcnt   use      flags        interface
                     //         fe800000000000000000000000000000 40 00000000000000000000000000000000 00 00000000000000000000000000000000 00000100 00000000 00000000 00000001     eth0
@@ -1448,7 +1498,7 @@ void GetNetworkingInfo(EvalContext *ctx)
         JsonObjectAppendElement(inet6, "routes", inet6_routes);
     }
 
-    BufferPrintf(pbuf, "%s/proc/net/if_inet6", procdir_root);
+    BufferPrintf(pbuf, "%s/proc/%d/net/if_inet6", procdir_root, promiser_pid);
     JsonElement *inet6_addresses = GetProcFileInfo(ctx, BufferData(pbuf),  NULL, "interface", &NetworkingIPv6AddressesPostProcessInfo, &NetworkingIPv6AddressesTiebreaker,
                     // format: address device_number prefix_length scope flags interface_name
                     // 00000000000000000000000000000001 01 80 10 80       lo
@@ -1471,7 +1521,7 @@ void GetNetworkingInfo(EvalContext *ctx)
     //  face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed
     //   eth0: 74850544807 75236137    0    0    0     0          0   1108775 63111535625 74696758    0    0    0     0       0          0
 
-    BufferPrintf(pbuf, "%s/proc/net/dev", procdir_root);
+    BufferPrintf(pbuf, "%s/proc/%d/net/dev", procdir_root, promiser_pid);
     JsonElement *interfaces_data =
     GetProcFileInfo(ctx, BufferData(pbuf), "interfaces_data", "device", NULL, NULL,
                     "^\\s*(?<device>[^:]+)\\s*:\\s*"
@@ -1499,34 +1549,35 @@ void GetNetworkingInfo(EvalContext *ctx)
 JsonElement* GetNetworkingConnections(EvalContext *ctx)
 {
     const char *procdir_root = GetRelocatedProcdirRoot();
+    int promiser_pid = GetProcdirPid();
     JsonElement *json = JsonObjectCreate(5);
     const char* ports_regex = "^\\s*\\d+:\\s+(?<raw_local>[0-9A-F:]+)\\s+(?<raw_remote>[0-9A-F:]+)\\s+(?<raw_state>[0-9]+)";
 
     JsonElement *data = NULL;
     Buffer *pbuf = BufferNew();
 
-    BufferPrintf(pbuf, "%s/proc/net/tcp", procdir_root);
+    BufferPrintf(pbuf, "%s/proc/%d/net/tcp", procdir_root, promiser_pid);
     data = GetProcFileInfo(ctx, BufferData(pbuf), NULL, NULL, &NetworkingPortsPostProcessInfo, NULL, ports_regex);
     if (data != NULL)
     {
         JsonObjectAppendElement(json, "tcp", data);
     }
 
-    BufferPrintf(pbuf, "%s/proc/net/tcp6", procdir_root);
+    BufferPrintf(pbuf, "%s/proc/%d/net/tcp6", procdir_root, promiser_pid);
     data = GetProcFileInfo(ctx, BufferData(pbuf), NULL, NULL, &NetworkingPortsPostProcessInfo, NULL, ports_regex);
     if (data != NULL)
     {
         JsonObjectAppendElement(json, "tcp6", data);
     }
 
-    BufferPrintf(pbuf, "%s/proc/net/udp", procdir_root);
+    BufferPrintf(pbuf, "%s/proc/%d/net/udp", procdir_root, promiser_pid);
     data = GetProcFileInfo(ctx, BufferData(pbuf), NULL, NULL, &NetworkingPortsPostProcessInfo, NULL, ports_regex);
     if (data != NULL)
     {
         JsonObjectAppendElement(json, "udp", data);
     }
 
-    BufferPrintf(pbuf, "%s/proc/net/udp6", procdir_root);
+    BufferPrintf(pbuf, "%s/proc/%d/net/udp6", procdir_root, promiser_pid);
     data = GetProcFileInfo(ctx, BufferData(pbuf), NULL, NULL, &NetworkingPortsPostProcessInfo, NULL, ports_regex);
     if (data != NULL)
     {

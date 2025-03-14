@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -241,7 +241,7 @@ bool RlistMatchesRegex(const Rlist *list, const char *regex)
         return false;
     }
 
-    pcre *rx = CompileRegex(regex);
+    Regex *rx = CompileRegex(regex);
     if (!rx)
     {
         return false;
@@ -252,12 +252,12 @@ bool RlistMatchesRegex(const Rlist *list, const char *regex)
         if (rp->val.type == RVAL_TYPE_SCALAR &&
             StringMatchFullWithPrecompiledRegex(rx, RlistScalarValue(rp)))
         {
-            pcre_free(rx);
+            RegexDestroy(rx);
             return true;
         }
     }
 
-    pcre_free(rx);
+    RegexDestroy(rx);
     return false;
 }
 
@@ -373,13 +373,14 @@ Rval RvalNewRewriter(const void *item, RvalType type, JsonElement *map)
 
             Buffer *format = BufferNew();
             StringCopy(item, buffer_from, max_size);
+            buffer_to[0] = '\0';
 
             for (int iteration = 0; iteration < 10; iteration++)
             {
                 bool replacement_made = false;
                 int var_start = -1;
                 char closing_brace = 0;
-                for (int c = 0; c < buffer_from[c]; c++)
+                for (int c = 0; buffer_from[c] != '\0'; c++)
                 {
                     if (buffer_from[c] == '$')
                     {
@@ -402,6 +403,7 @@ Rval RvalNewRewriter(const void *item, RvalType type, JsonElement *map)
                     {
                         char saved = buffer_from[c];
                         buffer_from[c] = '\0';
+
                         const char *repl = JsonObjectGetAsString(map, buffer_from + var_start + 2);
                         buffer_from[c] = saved;
 
@@ -433,7 +435,15 @@ Rval RvalNewRewriter(const void *item, RvalType type, JsonElement *map)
                 }
             }
 
-            char *ret = xstrdup(buffer_to);
+            char* ret;
+            if (buffer_to[0] == '\0') {
+                // If nothing has been written to buffer_to, we pass the input verbatim.
+                // This function only evaluates body parameters, but the body can also reference the global
+                // context.
+                ret = xstrdup(buffer_from);
+            } else {
+                ret = xstrdup(buffer_to);
+            }
 
             BufferDestroy(format);
             free(buffer_to);
@@ -1158,7 +1168,7 @@ Rlist *RlistFromSplitRegex(const char *string, const char *regex, size_t max_ent
     Rlist *result = NULL;
     Buffer *buffer = BufferNewWithCapacity(CF_MAXVARSIZE);
 
-    pcre *rx = CompileRegex(regex);
+    Regex *rx = CompileRegex(regex);
     if (rx)
     {
         while ((entry_count < max_entries) &&
@@ -1181,7 +1191,7 @@ Rlist *RlistFromSplitRegex(const char *string, const char *regex, size_t max_ent
             sp += end;
         }
 
-        pcre_free(rx);
+        RegexDestroy(rx);
     }
 
     if (entry_count < max_entries)
@@ -1221,7 +1231,7 @@ Rlist *RlistFromRegexSplitNoOverflow(const char *string, const char *regex, int 
 
     const char *sp = string;
     // We will avoid compiling regex multiple times.
-    pcre *pattern = CompileRegex(regex);
+    Regex *pattern = CompileRegex(regex);
 
     if (pattern == NULL)
     {
@@ -1252,7 +1262,7 @@ Rlist *RlistFromRegexSplitNoOverflow(const char *string, const char *regex, int 
     assert(count < max);
     RlistAppendScalar(&liststart, sp);
 
-    pcre_free(pattern);
+    RegexDestroy(pattern);
 
     return liststart;
 }
@@ -1339,7 +1349,7 @@ void RlistWrite(Writer *writer, const Rlist *list)
     WriterWriteChar(writer, '}');
 }
 
-void ScalarWrite(Writer *writer, const char *s, bool quote)
+void ScalarWrite(Writer *writer, const char *s, bool quote, bool raw)
 {
     if (quote)
     {
@@ -1347,7 +1357,7 @@ void ScalarWrite(Writer *writer, const char *s, bool quote)
     }
     for (; *s; s++)
     {
-        if (*s == '"')
+        if (*s == '"' && !raw)
         {
             WriterWriteChar(writer, '\\');
         }
@@ -1359,7 +1369,7 @@ void ScalarWrite(Writer *writer, const char *s, bool quote)
     }
 }
 
-static void RvalWriteParts(Writer *writer, const void* item, RvalType type, bool quote)
+static void RvalWriteParts(Writer *writer, const void* item, RvalType type, bool quote, bool raw)
 {
     if (item == NULL)
     {
@@ -1369,7 +1379,7 @@ static void RvalWriteParts(Writer *writer, const void* item, RvalType type, bool
     switch (type)
     {
     case RVAL_TYPE_SCALAR:
-        ScalarWrite(writer, item, quote);
+        ScalarWrite(writer, item, quote, raw);
         break;
 
     case RVAL_TYPE_LIST:
@@ -1392,12 +1402,17 @@ static void RvalWriteParts(Writer *writer, const void* item, RvalType type, bool
 
 void RvalWrite(Writer *writer, Rval rval)
 {
-    RvalWriteParts(writer, rval.item, rval.type, false);
+    RvalWriteParts(writer, rval.item, rval.type, false, false);
 }
 
 void RvalWriteQuoted(Writer *writer, Rval rval)
 {
-    RvalWriteParts(writer, rval.item, rval.type, true);
+    RvalWriteParts(writer, rval.item, rval.type, true, false);
+}
+
+void RvalWriteRaw(Writer *writer, Rval rval)
+{
+    RvalWriteParts(writer, rval.item, rval.type, false, true);
 }
 
 char *RvalToString(Rval rval)
@@ -1652,8 +1667,8 @@ bool RlistEqual(const Rlist *list1, const Rlist *list2)
             assert(rp1->val.item == NULL && rp2->val.item == NULL);
         }
     }
-
-    return true;
+    // return false if lengths are different
+    return (rp1 == NULL && rp2 == NULL);
 }
 
 bool RlistEqual_untyped(const void *list1, const void *list2)

@@ -56,11 +56,19 @@ typedef struct ValidatorState
 static Slice *NewLMDBSlice(void *data, size_t size)
 {
     assert(data != NULL);
-    assert(size > 0);
 
     Slice *r = xcalloc(1, sizeof(Slice));
     r->size = size;
-    r->data = xmemdup(data, size);
+    if (size == 0)
+    {
+        // don't call xmemdup(malloc inside) which is indeterminate whether
+        // it returns NULL or a valid pointer given size is 0.
+        r->data = NULL;
+    }
+    else
+    {
+        r->data = xmemdup(data, size);
+    }
 
     return r;
 }
@@ -293,9 +301,10 @@ static void UpdateValidatorLastseen(
         const char direction = key_string[1];
         if (direction == 'i' || direction == 'o')
         {
-            const KeyHostSeen *const data = value.mv_data;
+            KeyHostSeen data;
+            memcpy(&data, value.mv_data, sizeof(data));
 
-            const time_t lastseen = data->lastseen;
+            const time_t lastseen = data.lastseen;
             const time_t current = time(NULL);
 
             Log(LOG_LEVEL_DEBUG,
@@ -345,8 +354,9 @@ static void UpdateValidatorLock(
 
     const char *key_string = key.mv_data;
 
-    const LockData *const lock = value.mv_data;
-    const time_t lock_time = lock->time;
+    LockData lock;
+    memcpy(&lock, value.mv_data, sizeof(lock));
+    const time_t lock_time = lock.time;
     const time_t current = time(NULL);
 
     Log(LOG_LEVEL_DEBUG,
@@ -383,11 +393,6 @@ static void UpdateValidatorLock(
 static bool ValidateMDBValue(
     ValidatorState *state, MDB_val value, const char *name)
 {
-    if (value.mv_size <= 0)
-    {
-        ValidationError(state, "0 size %s", name);
-        return false;
-    }
     if (value.mv_data == NULL)
     {
         ValidationError(state, "NULL %s", name);

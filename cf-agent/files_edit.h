@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -60,7 +60,7 @@ void FinishEditContext(EvalContext *ctx, EditContext *ec,
                        PromiseResult *result);
 
 #ifdef HAVE_LIBXML2
-bool LoadFileAsXmlDoc(xmlDocPtr *doc, const char *file, EditDefaults ed);
+bool LoadFileAsXmlDoc(xmlDocPtr *doc, const char *file, EditDefaults ed, bool only_checks);
 bool SaveXmlDocAsFile(xmlDocPtr doc, const char *file,
                       const Attributes *a, NewLineMode new_line_mode);
 #endif

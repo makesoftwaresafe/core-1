@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -24,6 +24,8 @@
 
 #include <platform.h>
 
+#define PCRE2_CODE_UNIT_WIDTH 8
+#include <pcre2.h>
 #include <sysinfo.h>
 #include <sysinfo_priv.h>
 #include <cf3.extern.h>
@@ -467,7 +469,7 @@ static void GetNameInfo3(EvalContext *ctx)
         "cf-promises", "cf-upgrade", "cf-net", "cf-check", "cf-secret",
         NULL
     };
-    int have_component[COMPONENTS_SIZE];
+    int have_component[COMPONENTS_SIZE] = {0};
     struct stat sb;
     char name[CF_MAXVARSIZE], quoteName[CF_MAXVARSIZE + 2], shortname[CF_MAXVARSIZE];
 
@@ -2659,7 +2661,7 @@ static void Linux_Amazon_Version(EvalContext *ctx)
 {
     char buffer[CF_BUFSIZE];
 
-    // Amazon Linux AMI release 2016.09
+    // Amazon Linux release 2 (Karoo)
 
     if (ReadLine("/etc/system-release", buffer, sizeof(buffer)))
     {
@@ -2670,7 +2672,7 @@ static void Linux_Amazon_Version(EvalContext *ctx)
                 ",derived-from-file=/etc/system-release");
 
             char version[128];
-            if (sscanf(buffer, "%*s %*s %*s %*s %127s", version) == 1)
+            if (sscanf(buffer, "%*s %*s %*s %127s", version) == 1)
             {
                 char class[CF_MAXVARSIZE];
 
@@ -2679,8 +2681,16 @@ static void Linux_Amazon_Version(EvalContext *ctx)
                 EvalContextClassPutHard(ctx, class,
                     "inventory,attribute_name=none,source=agent"
                     ",derived-from-file=/etc/system-release");
+                SetFlavor(ctx, class);
             }
-            SetFlavor(ctx, "AmazonLinux");
+            else
+            {
+                SetFlavor(ctx, "amazon_linux");
+            }
+            // We set this class for backwards compatibility
+            EvalContextClassPutHard(ctx, "AmazonLinux",
+                    "inventory,attribute_name=none,source=agent,"
+                    "derived-from=sys.flavor");
         }
     }
 }
@@ -3240,21 +3250,19 @@ int GetUptimeMinutes(time_t now)
 // index number (i.e., the count of left-parentheses):
 #define UPTIME_REGEXP " up (\\d+ day[^,]*,|) *(\\d+( ho?u?r|:(\\d+))|(\\d+) min)"
 #define UPTIME_BACKREFS 5
-#define UPTIME_OVECTOR ((UPTIME_BACKREFS + 1) * 3)
 
 static time_t GetBootTimeFromUptimeCommand(time_t now)
 {
     FILE *uptimecmd;
-    pcre *rx;
-    int ovector[UPTIME_OVECTOR], i;
     char *backref = NULL;
     const char *uptimepath = "/usr/bin/uptime";
     time_t uptime = 0;
-    const char *errptr;
-    int erroffset;
 
-    rx = pcre_compile(UPTIME_REGEXP, 0, &errptr, &erroffset, NULL);
-    if (rx == NULL)
+    int err_code;
+    size_t err_offset;
+    pcre2_code *regex = pcre2_compile((PCRE2_SPTR) UPTIME_REGEXP, PCRE2_ZERO_TERMINATED, 0,
+                                      &err_code, &err_offset, NULL);
+    if (regex == NULL)
     {
         Log(LOG_LEVEL_DEBUG, "failed to compile regexp to parse uptime command");
         return(-1);
@@ -3266,23 +3274,29 @@ static time_t GetBootTimeFromUptimeCommand(time_t now)
     if (!uptimecmd)
     {
         Log(LOG_LEVEL_ERR, "uptime failed: (cf_popen: %s)", GetErrorStr());
+        pcre2_code_free(regex);
         return -1;
     }
 
     size_t uptime_output_size = CF_SMALLBUF;
     char *uptime_output = xmalloc(uptime_output_size);
-    i = CfReadLine(&uptime_output, &uptime_output_size, uptimecmd);
+    ssize_t n_read = CfReadLine(&uptime_output, &uptime_output_size, uptimecmd);
 
     cf_pclose(uptimecmd);
-    if (i == -1 && !feof(uptimecmd))
+    if (n_read == -1 && !feof(uptimecmd))
     {
         Log(LOG_LEVEL_ERR, "Reading uptime output failed. (getline: '%s')", GetErrorStr());
+        pcre2_code_free(regex);
         return -1;
     }
 
-    if ((i > 0) && (pcre_exec(rx, NULL, (const char *)uptime_output, i, 0, 0, ovector, UPTIME_OVECTOR) > 1))
+    pcre2_match_data *match_data = pcre2_match_data_create_from_pattern(regex, NULL);
+    if ((n_read > 0) &&
+        (pcre2_match(regex, (PCRE2_SPTR) uptime_output, PCRE2_ZERO_TERMINATED,
+                     0, 0, match_data, NULL) > 1))
     {
-        for (i = 1; i <= UPTIME_BACKREFS ; i++)
+        size_t *ovector = pcre2_get_ovector_pointer(match_data);
+        for (int i = 1; i <= UPTIME_BACKREFS ; i++)
         {
             if (ovector[i * 2 + 1] - ovector[i * 2] == 0) // strlen(backref)
             {
@@ -3314,7 +3328,8 @@ static time_t GetBootTimeFromUptimeCommand(time_t now)
     {
         Log(LOG_LEVEL_ERR, "uptime PCRE match failed: regexp: '%s', uptime: '%s'", UPTIME_REGEXP, uptime_output);
     }
-    pcre_free(rx);
+    pcre2_match_data_free(match_data);
+    pcre2_code_free(regex);
     Log(LOG_LEVEL_VERBOSE, "Reading boot time from uptime command successful.");
     return(uptime ? (now - uptime) : -1);
 }
@@ -3469,17 +3484,55 @@ static void SysOSNameHuman(EvalContext *ctx)
                                       "FreeBSD", CF_DATA_TYPE_STRING,
                                       "source=agent,derived-from=freebsd");
     }
+    else if (EvalContextClassGet(ctx, NULL, "openbsd") != NULL)
+    {
+        EvalContextVariablePutSpecial(ctx, SPECIAL_SCOPE_SYS, lval,
+                                      "OpenBSD", CF_DATA_TYPE_STRING,
+                                      "source=agent,derived-from=openbsd");
+    }
+    else if (EvalContextClassGet(ctx, NULL, "netbsd") != NULL)
+    {
+        EvalContextVariablePutSpecial(ctx, SPECIAL_SCOPE_SYS, lval,
+                                      "NetBSD", CF_DATA_TYPE_STRING,
+                                      "source=agent,derived-from=netbsd");
+    }
     else if (EvalContextClassGet(ctx, NULL, "solaris") != NULL)
     {
         EvalContextVariablePutSpecial(ctx, SPECIAL_SCOPE_SYS, lval,
                                       "Solaris", CF_DATA_TYPE_STRING,
                                       "source=agent,derived-from=solaris");
     }
+    else if (EvalContextClassGet(ctx, NULL, "amazon_linux") != NULL)
+    {
+        EvalContextVariablePutSpecial(ctx, SPECIAL_SCOPE_SYS, lval,
+                                      "Amazon", CF_DATA_TYPE_STRING,
+                                      "source=agent,derived-from=amazon_linux");
+    }
+    else if (EvalContextClassGet(ctx, NULL, "arch") != NULL)
+    {
+        EvalContextVariablePutSpecial(ctx, SPECIAL_SCOPE_SYS, lval,
+                                      "Arch", CF_DATA_TYPE_STRING,
+                                      "source=agent,derived-from=arch");
+    }
+    else if (EvalContextClassGet(ctx, NULL, "postmarketos") != NULL)
+    {
+        EvalContextVariablePutSpecial(ctx, SPECIAL_SCOPE_SYS, lval,
+                                      "postmarketOS", CF_DATA_TYPE_STRING,
+                                      "source=agent,derived-from=postmarketos");
+    }
+    else if (EvalContextClassGet(ctx, NULL, "alpine") != NULL)
+    {
+        EvalContextVariablePutSpecial(ctx, SPECIAL_SCOPE_SYS, lval,
+                                      "Alpine", CF_DATA_TYPE_STRING,
+                                      "source=agent,derived-from=alpine");
+    }
     else
     {
         EvalContextVariablePutSpecial(ctx, SPECIAL_SCOPE_SYS, lval,
                                       "Unknown", CF_DATA_TYPE_STRING,
                                       "source=agent");
+        Log(LOG_LEVEL_WARNING,
+            "Operating System not properly recognized, setting sys.os_name_human to \"Unknown\", please submit a bug report for us to fix this");
     }
 }
 

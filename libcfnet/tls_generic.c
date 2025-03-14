@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -988,7 +988,7 @@ bool TLSSetCipherList(SSL_CTX *ssl_ctx, const char *cipher_list)
 {
     assert(ssl_ctx);
 
-    if (cipher_list == NULL)
+    if (NULL_OR_EMPTY(cipher_list))
     {
         Log(LOG_LEVEL_VERBOSE, "Using the OpenSSL's default cipher list");
         /* nothing more to do */
@@ -999,13 +999,15 @@ bool TLSSetCipherList(SSL_CTX *ssl_ctx, const char *cipher_list)
         cipher_list);
 
     const size_t max_len = strlen(cipher_list) + 1; /* NUL byte */
-    size_t n_specs = StringCountTokens(cipher_list, max_len, ":");
+    size_t n_specs = StringCountTokens(cipher_list, max_len - 1, ":");
 
     /* TLS 1.3 defines cipher suites, they start with "TLS_" */
     char ciphers[max_len];
+    ciphers[0] = '\0';
     size_t ciphers_len = 0;
 
     char cipher_suites[max_len];
+    cipher_suites[0] = '\0';
     size_t cipher_suites_len = 0;
 
     for (size_t i = 0; i < n_specs; i++)
@@ -1021,8 +1023,22 @@ bool TLSSetCipherList(SSL_CTX *ssl_ctx, const char *cipher_list)
         }
     }
 
+    /* The above code can leave a trailing colon in the lists because it copies
+     * the items over *with* the colons splitting them. */
+    if ((ciphers_len > 0) && (ciphers[ciphers_len - 1] == ':'))
+    {
+        ciphers[ciphers_len - 1] = '\0';
+        ciphers_len--;
+    }
+    if ((cipher_suites_len > 0) && (cipher_suites[cipher_suites_len - 1] == ':'))
+    {
+        cipher_suites[cipher_suites_len - 1] = '\0';
+        cipher_suites_len--;
+    }
+
     if (ciphers_len != 0)       /* TLS <= 1.2 ciphers */
     {
+        Log(LOG_LEVEL_VERBOSE, "Enabling ciphers '%s' for TLS 1.2 and older", ciphers);
         int ret = SSL_CTX_set_cipher_list(ssl_ctx, ciphers);
         if (ret != 1)
         {
@@ -1034,6 +1050,7 @@ bool TLSSetCipherList(SSL_CTX *ssl_ctx, const char *cipher_list)
 #ifdef HAVE_TLS_1_3
     if (cipher_suites_len != 0) /* TLS >= 1.3 ciphers */
     {
+        Log(LOG_LEVEL_VERBOSE, "Enabling cipher suites '%s' for TLS 1.3 and newer", cipher_suites);
         int ret = SSL_CTX_set_ciphersuites(ssl_ctx, cipher_suites);
         if (ret != 1)
         {

@@ -1,5 +1,5 @@
 /*
-  Copyright 2022 Northern.tech AS
+  Copyright 2024 Northern.tech AS
 
   This file is part of CFEngine 3 - written and maintained by Northern.tech AS.
 
@@ -27,7 +27,10 @@
 #include <openssl/err.h>                                        /* ERR_* */
 #include <openssl/rand.h>                                       /* RAND_* */
 #include <openssl/bn.h>                                         /* BN_* */
-#include <libcrypto-compat.h>
+
+#if OPENSSL_VERSION_NUMBER > 0x30000000
+#include <openssl/provider.h>                                   /* OSSL_PROVIDER_* */
+#endif
 
 #include <cf3.defs.h>
 #include <lastseen.h>
@@ -59,6 +62,11 @@ static void CleanupOpenSSLThreadLocks(void);
 
 static bool crypto_initialized = false; /* GLOBAL_X */
 
+#if OPENSSL_VERSION_NUMBER > 0x30000000
+static OSSL_PROVIDER *legacy_provider = NULL;
+static OSSL_PROVIDER *default_provider = NULL;
+#endif
+
 const char *CryptoLastErrorString()
 {
     const char *errmsg = ERR_reason_error_string(ERR_get_error());
@@ -74,6 +82,13 @@ void CryptoInitialize()
         OpenSSL_add_all_digests();
         ERR_load_crypto_strings();
 
+#if OPENSSL_VERSION_NUMBER > 0x30000000
+        /* We need Blowfish for legacy encrypted network stuff and in OpenSSL
+         * 3+, it's only available when the legacy provider is loaded. And we
+         * also need the default provider. */
+        legacy_provider = OSSL_PROVIDER_load(NULL, "legacy");
+        default_provider = OSSL_PROVIDER_load(NULL, "default");
+#endif
         RandomSeed();
 
         crypto_initialized = true;
@@ -103,6 +118,20 @@ void CryptoDeInitialize()
         EVP_cleanup();
         CleanupOpenSSLThreadLocks();
         ERR_free_strings();
+
+#if OPENSSL_VERSION_NUMBER > 0x30000000
+        if (legacy_provider != NULL)
+        {
+            OSSL_PROVIDER_unload(legacy_provider);
+            legacy_provider = NULL;
+        }
+        if (default_provider != NULL)
+        {
+            OSSL_PROVIDER_unload(default_provider);
+            default_provider = NULL;
+        }
+#endif
+
         crypto_initialized = false;
     }
 }
@@ -858,11 +887,13 @@ static void SetupOpenSSLThreadLocks(void)
     }
 
 #ifndef __MINGW32__
+#if OPENSSL_VERSION_NUMBER < 0x10100000
     CRYPTO_set_id_callback((unsigned long (*)())ThreadId_callback);
 #endif
-    // This is a no-op macro for OpenSSL >= 1.1.0
-    // The callback function is not used (or defined) then
+#endif
+#if OPENSSL_VERSION_NUMBER < 0x10100000
     CRYPTO_set_locking_callback((void (*)())OpenSSLLock_callback);
+#endif
 }
 
 static void CleanupOpenSSLThreadLocks(void)
@@ -870,7 +901,9 @@ static void CleanupOpenSSLThreadLocks(void)
     const int numLocks = CRYPTO_num_locks();
     CRYPTO_set_locking_callback(NULL);
 #ifndef __MINGW32__
+#if OPENSSL_VERSION_NUMBER < 0x10100000
     CRYPTO_set_id_callback(NULL);
+#endif
 #endif
 
     for (int i = 0; i < numLocks; i++)

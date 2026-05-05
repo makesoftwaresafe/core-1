@@ -1,6 +1,8 @@
 ######################################################
 #
-#  Test that @if works with patch level
+#  Test that macros correctly skip content
+#  even when it is invalid syntax
+#
 #####################################################
 body common control
 {
@@ -10,17 +12,6 @@ body common control
 
 bundle agent init
 {
-  files:
-    "$(G.testdir)$(const.dirsep)test.cf"
-      create => "true",
-      edit_template => "$(this.promise_filename).sub.template",
-      template_method => "mustache";
-}
-
-bundle agent test
-{
-  meta:
-    "test_skip_needs_work" string => "windows";
 }
 
 bundle agent check
@@ -34,13 +25,13 @@ bundle agent check
     "check"
       usebundle => dcs_passif_output(
         regex_replace(
-          ".*$(G.testdir)$(const.dirsep)test.cf Pass.*",
+          ".*$(this.promise_dirname)$(const.dirsep)if_invalid_syntax_in_macro.sub.x.cf Pass.*",
           "\\\\",
           "\\\\\\\\",
           "g"
         ),
         ".*FAIL.*",
-        "$(sys.cf_agent) -D AUTO -Kf $(G.testdir)$(const.dirsep)test.cf",
+        "$(sys.cf_agent) -D AUTO -Kf -f $(this.promise_dirname)$(const.dirsep)if_invalid_syntax_in_macro.sub.x.cf",
         $(this.promise_filename)
       );
 }
